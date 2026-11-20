@@ -63,7 +63,7 @@
 
 // How many LED programs do we have to loop through (cases 0..LED_PROGRAMS-1 in loop()).
 // Remember to bump this when adding a new case.
-#define LED_PROGRAMS 15
+#define LED_PROGRAMS 20
 
 // Where is the mic connected?
 #define MIC_PIN A0
@@ -586,42 +586,64 @@ void loop() {
       logoSunrise();
       break;
 
-    // ----- Original programs -----
-    // 7: Fading rainbow sides + scrolling chant that changes color as a whole
+    // ----- Rainbow programs -----
+    // 7: Logo with rainbow segments, digits and letters rotating round
     case 7:
+      rainbowSlice();
+      break;
+    // 8: Big SLICE / 8738 filled with a sweeping rainbow, rainbow up the sides
+    case 8:
+      rainbowWave();
+      break;
+    // 9: Swirling rainbow plasma with SLICE / 8738 cut out in black
+    case 9:
+      plasma();
+      break;
+    // 10: Rainbow confetti twinkling behind white SLICE / 8738
+    case 10:
+      confetti();
+      break;
+    // 11: Sound-reactive rainbow equalizer bars + rainbow sound meter sides
+    case 11:
+      rainbowBeat();
+      break;
+
+    // ----- Original programs -----
+    // 12: Fading rainbow sides + scrolling chant that changes color as a whole
+    case 12:
       rainbow(15);
       rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 15, SCROLL_STEP, false);
       break;
-    // 8: Fading rainbow sides + scrolling chant with each letter a different color
-    case 8:
+    // 13: Fading rainbow sides + scrolling chant with each letter a different color
+    case 13:
       rainbow(15);
       rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 85, SCROLL_STEP, true);
       break;
-    // 9: Sound-reactive VU meter on the sides + red "SLICE" / "8738" flashing
-    case 9:
+    // 14: Sound-reactive VU meter on the sides + red "SLICE" / "8738" flashing
+    case 14:
       noise(micVolume, analogRead(MAX_PIN), analogRead(MIN_PIN));
       alternatePhrases("SLICE", "8738", rainbowColors[0], 800, 300);
       break;
-    // 10: Orange blinking sides + inverted (black on orange) "SLICE" / "8738"
-    case 10:
+    // 15: Orange blinking sides + inverted (black on orange) "SLICE" / "8738"
+    case 15:
       blink(255, 50, 0);
       alternatePhrases("SLICE", "8738", ORANGE, 3000, 0, true);
       break;
-    // 11: Light up S, L, I, C, E one at a time, with matching matrix text
-    case 11:
+    // 16: Light up S, L, I, C, E one at a time, with matching matrix text
+    case 16:
       cycleAllLetters(255, 50, 0, 2, true);
       break;
-    // 12: Letter-by-letter then blink the whole word + scrolling orange chant
-    case 12:
+    // 17: Letter-by-letter then blink the whole word + scrolling orange chant
+    case 17:
       cycleAndBlink();
       coloredScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, SCROLL_STEP, ORANGE);
       break;
-    // 13: One continuous rainbow wrapping side -> matrix -> side, text in shadow
-    case 13:
+    // 18: One continuous rainbow wrapping side -> matrix -> side, text in shadow
+    case 18:
       verticalRainbow();
       break;
-    // 14: White "headlights" fading in and out with inverted text
-    case 14:
+    // 19: White "headlights" fading in and out with inverted text
+    case 19:
       headLights();
       break;
     default:
@@ -1368,6 +1390,16 @@ void drawTinyDigit(int x, int y, char c, uint16_t color) {
  * @param showDigits draw 8 7 3 8 inside the segments (only when it's big enough)
  **/
 void drawSlice(const SlicePose &p, uint8_t litMask, uint16_t fillColor, bool showDigits) {
+  uint16_t segColors[4];
+  for (int k = 0; k < 4; k++) segColors[k] = (litMask & (1 << k)) ? fillColor : BLACK;
+  drawSliceSegments(p, segColors, showDigits);
+}
+
+/**
+ * Draw the orange slice with each segment filled in its own color
+ * (segColors[0] = leftmost). Digits in filled segments are drawn white.
+ **/
+void drawSliceSegments(const SlicePose &p, const uint16_t segColors[4], bool showDigits) {
   initSliceTables();
   if (p.r < 0.5) return;
 
@@ -1382,7 +1414,7 @@ void drawSlice(const SlicePose &p, uint8_t litMask, uint16_t fillColor, bool sho
 
   // Fill each segment as a fan of triangles from the center
   for (int k = 0; k < 4; k++) {
-    uint16_t color = (litMask & (1 << k)) ? fillColor : BLACK;
+    uint16_t color = segColors[k];
     for (int j = k * 4; j < k * 4 + 4; j++) {
       matrix.fillTriangle(cx, cy, ax[j], ay[j], ax[j + 1], ay[j + 1], color);
     }
@@ -1424,7 +1456,7 @@ void drawSlice(const SlicePose &p, uint8_t litMask, uint16_t fillColor, bool sho
     for (int k = 0; k < 4; k++) {
       int16_t dx, dy;
       sliceDigitPos(p, k, dx, dy);
-      drawTinyDigit(dx, dy, "8738"[k], (litMask & (1 << k)) ? WHITE : CYAN);
+      drawTinyDigit(dx, dy, "8738"[k], segColors[k] != BLACK ? WHITE : CYAN);
     }
   }
 }
@@ -1754,6 +1786,329 @@ void logoSunrise() {
     int cyan = t < 3600 ? lit : 5;
     sideLetters(firstLetters(cyan), ALL_LETTERS, 255 * (1 - sink));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Rainbow helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Rainbow color for a hue from 0-255: 0 = red, 43 = yellow, 85 = green,
+ * 128 = cyan, 170 = blue, 213 = magenta, and back round to red. Because it's
+ * a byte, adding to the hue always wraps round the rainbow.
+ **/
+void hueToRGB(uint8_t hue, uint8_t &r, uint8_t &g, uint8_t &b) {
+  uint8_t sector = hue / 43;                 // which sixth of the rainbow
+  uint8_t f = (hue - sector * 43) * 6;       // 0-252 through that sixth
+  switch (sector) {
+    case 0:  r = 255;     g = f;       b = 0;       break;  // red -> yellow
+    case 1:  r = 255 - f; g = 255;     b = 0;       break;  // yellow -> green
+    case 2:  r = 0;       g = 255;     b = f;       break;  // green -> cyan
+    case 3:  r = 0;       g = 255 - f; b = 255;     break;  // cyan -> blue
+    case 4:  r = f;       g = 0;       b = 255;     break;  // blue -> magenta
+    default: r = 255;     g = 0;       b = 255 - f; break;  // magenta -> red
+  }
+}
+
+// Matrix color for a hue, at a brightness from 0-255
+uint16_t hueColor(uint8_t hue, uint8_t level) {
+  uint8_t r, g, b;
+  hueToRGB(hue, r, g, b);
+  return matrix.Color(scale8(r, level), scale8(g, level), scale8(b, level));
+}
+
+// Set one row of the side letters (0 = bottom of E, 42 = top of S) to a hue
+void setRowHue(int row, uint8_t hue, uint8_t level) {
+  uint8_t r, g, b;
+  hueToRGB(hue, r, g, b);
+  setRow(row, scale8(r, level), scale8(g, level), scale8(b, level));
+}
+
+// A smooth wave: sin8(0..255) goes 128 -> 255 -> 128 -> 0 -> 128.
+// Uses a table because calling sin() 1000 times a frame is too slow.
+uint8_t sinTable[256];
+bool sinTableReady = false;
+
+uint8_t sin8(uint8_t x) {
+  if (!sinTableReady) {
+    for (int i = 0; i < 256; i++) sinTable[i] = 128 + 127 * sin(i * 2 * PI / 256);
+    sinTableReady = true;
+  }
+  return sinTable[x];
+}
+
+// The hue that slowly cycles round for the rainbow programs (one lap = ~3s)
+uint8_t rainbowBase() {
+  return (time / 12) & 0xFF;
+}
+
+// "SLICE" for 2 seconds, then "8738" for 2 seconds
+const char *sliceOr8738() {
+  return (time / 2000) % 2 == 0 ? "SLICE" : "8738";
+}
+
+// ---------------------------------------------------------------------------
+// Program: rainbow slice
+// ---------------------------------------------------------------------------
+
+/**
+ * The logo with each segment of the slice a different color, rotating
+ * round. Each digit of 8738 is the same color as its segment, and the letters
+ * of SLICE are a rainbow too. Each side letter is its own color, rotating.
+ **/
+void rainbowSlice() {
+  startSide("rainbowSlice");
+  startScroll("rainbowSlice");
+  uint8_t base = rainbowBase();
+
+  uint16_t segColors[4];
+  for (int k = 0; k < 4; k++) segColors[k] = hueColor(base + k * 64, 255);
+
+  matrix.clear();
+  drawSliceSegments(slicePose(15, 0, 15, 0), segColors, false);
+  for (int i = 0; i < 5; i++) {
+    uint16_t c = hueColor(base + i * 30, 255);
+    matrix.drawChar(LOGO_TEXT_X + i * 6, 0, "SLICE"[i], c, c, 1);
+  }
+  for (int k = 0; k < 4; k++) {
+    matrix.drawChar(LOGO_NUMBER_X + k * 6, LOGO_NUMBER_Y, "8738"[k], segColors[k], segColors[k], 1);
+  }
+  showMatrix();
+
+  strip.clear();
+  for (int l = 0; l < 5; l++) {
+    uint8_t r, g, b;
+    hueToRGB(base + l * 51, r, g, b);
+    fillLetter(l + 1, r, g, b);
+  }
+  updateLeds();
+}
+
+// ---------------------------------------------------------------------------
+// Program: rainbow wave
+// ---------------------------------------------------------------------------
+
+// A 1-bit drawing surface the size of the matrix. Text is drawn here first,
+// then each lit pixel is copied to the matrix in its own color.
+GFXcanvas1 textMask(GRID_NUM_COLS * GRID_TILES_X, GRID_NUM_ROWS * GRID_TILES_Y);
+
+/**
+ * Big SLICE / 8738 filled with a diagonal rainbow that sweeps across it.
+ * The side letters have a rainbow flowing up them.
+ **/
+void rainbowWave() {
+  startSide("rainbowWave");
+  startScroll("rainbowWave");
+  uint8_t base = time / 8;
+
+  // Draw the word into the mask, centered like showText()
+  const char *word = sliceOr8738();
+  textMask.fillScreen(0);
+  textMask.setTextSize(2);
+  textMask.setTextWrap(false);
+  textMask.setCursor((matrix.width() - (int)strlen(word) * CHAR_PIX_WIDTH * 2) / 2 + 1, 1);
+  textMask.print(word);
+
+  matrix.clear();
+  for (int y = 0; y < matrix.height(); y++) {
+    for (int x = 0; x < matrix.width(); x++) {
+      if (textMask.getPixel(x, y)) matrix.drawPixel(x, y, hueColor(base - x * 4 - y * 6, 255));
+    }
+  }
+  showMatrix();
+
+  for (int row = 0; row < 43; row++) setRowHue(row, base - row * 6, 255);
+  updateLeds();
+}
+
+// ---------------------------------------------------------------------------
+// Program: plasma
+// ---------------------------------------------------------------------------
+
+/**
+ * Swirling rainbow plasma filling the whole display, made by adding a few
+ * moving waves together, with SLICE / 8738 cut out of it in black.
+ * The side letters swirl in the same colors.
+ **/
+void plasma() {
+  startSide("plasma");
+  startScroll("plasma");
+  uint8_t t1 = time / 10, t2 = time / 15, t3 = time / 23;
+
+  for (int y = 0; y < matrix.height(); y++) {
+    for (int x = 0; x < matrix.width(); x++) {
+      uint16_t v = sin8(x * 8 + t1) + sin8(y * 20 - t2) + sin8((x + y) * 5 + t3);
+      matrix.drawPixel(x, y, hueColor(v / 3 + t1, 255));
+    }
+  }
+  // Draws the text in black on top and sends it to the matrix
+  showText(sliceOr8738(), BLACK, false, false);
+
+  for (int row = 0; row < 43; row++) {
+    uint16_t v = sin8(row * 12 + t2) + sin8(row * 5 - t3);
+    setRowHue(row, v / 2 + t1, 255);
+  }
+  updateLeds();
+}
+
+// ---------------------------------------------------------------------------
+// Program: confetti
+// ---------------------------------------------------------------------------
+
+#define MATRIX_SPARKLES 110
+#define SIDE_SPARKLES 60
+// How long each sparkle lasts (ms): fades in quickly, then out
+#define SPARKLE_LIFE 700
+#define SPARKLE_RISE 120
+
+// Each sparkle has a position, a hue and when it started. The start time is
+// only kept to 16 bits (it wraps every 65s) to save RAM; that's fine because
+// a sparkle only lives for SPARKLE_LIFE ms.
+int8_t sparkX[MATRIX_SPARKLES], sparkY[MATRIX_SPARKLES];
+uint8_t sparkHue[MATRIX_SPARKLES];
+uint16_t sparkBorn[MATRIX_SPARKLES];
+int sideSparkLed[SIDE_SPARKLES];
+uint8_t sideSparkHue[SIDE_SPARKLES];
+uint16_t sideSparkBorn[SIDE_SPARKLES];
+
+// How old a sparkle born at `born` is, in ms
+uint16_t sparkleAge(uint16_t born) {
+  return (uint16_t)time - born;
+}
+
+// Brightness (0-255) of a sparkle that is `age` ms old
+uint8_t sparkleLevel(uint16_t age) {
+  if (age >= SPARKLE_LIFE) return 0;
+  if (age < SPARKLE_RISE) return (unsigned long)age * 255 / SPARKLE_RISE;
+  return (unsigned long)(SPARKLE_LIFE - age) * 255 / (SPARKLE_LIFE - SPARKLE_RISE);
+}
+
+// A random side LED, skipping the always-white internal illuminator (128-170)
+int randomSideLed() {
+  int i = random(NUM_LEDS - 43 - 1);
+  return i < 128 ? i : i + 43;
+}
+
+/**
+ * Rainbow confetti twinkling all over the display and the side letters,
+ * with big white SLICE / 8738 in front.
+ **/
+void confetti() {
+  startSide("confetti");
+  if (startScroll("confetti")) {
+    // Start every sparkle at a different point in its life so they don't
+    // all appear at once
+    for (int i = 0; i < MATRIX_SPARKLES; i++) {
+      sparkX[i] = random(matrix.width());
+      sparkY[i] = random(matrix.height());
+      sparkHue[i] = random(256);
+      sparkBorn[i] = (uint16_t)time - random(SPARKLE_LIFE);
+    }
+    for (int i = 0; i < SIDE_SPARKLES; i++) {
+      sideSparkLed[i] = randomSideLed();
+      sideSparkHue[i] = random(256);
+      sideSparkBorn[i] = (uint16_t)time - random(SPARKLE_LIFE);
+    }
+  }
+
+  matrix.clear();
+  for (int i = 0; i < MATRIX_SPARKLES; i++) {
+    if (sparkleAge(sparkBorn[i]) >= SPARKLE_LIFE) {
+      // This one's finished: start a new one somewhere else
+      sparkX[i] = random(matrix.width());
+      sparkY[i] = random(matrix.height());
+      sparkHue[i] = random(256);
+      sparkBorn[i] = time;
+    }
+    // Each piece of confetti is 2 pixels wide
+    matrix.drawFastHLine(sparkX[i], sparkY[i], 2, hueColor(sparkHue[i], sparkleLevel(sparkleAge(sparkBorn[i]))));
+  }
+  showText(sliceOr8738(), WHITE, false, false);
+
+  strip.clear();
+  for (int i = 0; i < SIDE_SPARKLES; i++) {
+    if (sparkleAge(sideSparkBorn[i]) >= SPARKLE_LIFE) {
+      sideSparkLed[i] = randomSideLed();
+      sideSparkHue[i] = random(256);
+      sideSparkBorn[i] = time;
+    }
+    uint8_t r, g, b;
+    uint8_t level = sparkleLevel(sparkleAge(sideSparkBorn[i]));
+    hueToRGB(sideSparkHue[i], r, g, b);
+    strip.setPixelColor(sideSparkLed[i], scale8(r, level), scale8(g, level), scale8(b, level));
+  }
+  updateLeds();
+}
+
+// ---------------------------------------------------------------------------
+// Program: rainbow beat
+// ---------------------------------------------------------------------------
+
+#define BEAT_BARS 16
+// Bar heights and their peak dots, in quarter pixels (0-64) so they can fall smoothly
+uint8_t beatBar[BEAT_BARS];
+uint8_t beatPeak[BEAT_BARS];
+// Height of the rainbow sound meter on the side letters (0-43 rows)
+int beatRows = 0;
+
+/**
+ * The microphone volume from 0-255, using the two pots the same way the
+ * sound meter program does: MIN_PIN sets the noise floor, MAX_PIN the gain.
+ **/
+int micLevel() {
+  int minPot = analogRead(MIN_PIN) / 4;
+  int maxPot = analogRead(MAX_PIN) / 4;
+  long level = micVolume - minPot;
+  if (level < 0) level = 0;
+  int range = (255 - maxPot) - minPot;
+  if (range < 1) range = 1;
+  level = level * (255 / range);
+  return level > 255 ? 255 : level;
+}
+
+/**
+ * Sound-reactive rainbow equalizer: 16 bars that jump with the music and
+ * fall back down, with white peak dots that fall more slowly. The side
+ * letters are a rainbow sound meter.
+ **/
+void rainbowBeat() {
+  startSide("rainbowBeat");
+  if (startScroll("rainbowBeat")) {
+    for (int i = 0; i < BEAT_BARS; i++) beatBar[i] = beatPeak[i] = 0;
+    beatRows = 0;
+  }
+  int level = micLevel();
+
+  matrix.clear();
+  for (int i = 0; i < BEAT_BARS; i++) {
+    // Give each bar its own share of the volume (50-100%), changing over
+    // time, so they move like a spectrum analyzer
+    long share = 128 + sin8(i * 37 + time / 4) / 2;
+    // Full height at a medium-loud level (160), so the bars use the whole display
+    long target = (long)level * share / 255 * 64 / 160;
+    if (target > 64) target = 64;
+
+    if (target > beatBar[i]) beatBar[i] = target;      // jump up
+    else if (beatBar[i] >= 3) beatBar[i] -= 3;         // fall back
+    else beatBar[i] = 0;
+    if (beatBar[i] > beatPeak[i]) beatPeak[i] = beatBar[i];
+    else if (beatPeak[i] > 0) beatPeak[i]--;           // peaks fall slower
+
+    int h = beatBar[i] / 4;
+    int x = i * 4;
+    if (h > 0) matrix.fillRect(x, 16 - h, 3, h, hueColor(i * 16 + time / 20, 255));
+    int peakY = 15 - beatPeak[i] / 4;
+    if (beatPeak[i] > 0 && peakY >= 0) matrix.drawFastHLine(x, peakY, 3, WHITE);
+  }
+  showMatrix();
+
+  int rows = (long)level * 43 / 160;
+  if (rows > 43) rows = 43;
+  if (rows > beatRows) beatRows = rows;
+  else if (beatRows > 0) beatRows--;
+  strip.clear();
+  for (int row = 0; row < beatRows; row++) setRowHue(row, row * 6, 255);
+  updateLeds();
 }
 
 /**

@@ -57,6 +57,9 @@ inline unsigned long millis() { return sim_clock_us / 1000; }
 inline unsigned long micros() { return sim_clock_us; }
 inline void delay(unsigned long ms) { sim_advance_us(ms * 1000); }
 inline int analogRead(int pin) { return sim_analogRead(pin); }
+inline long random(long howBig) { return howBig <= 0 ? 0 : rand() % howBig; }
+inline long random(long lo, long hi) { return lo + random(hi - lo); }
+inline void randomSeed(unsigned long seed) { srand(seed); }
 inline int digitalRead(int) { return LOW; }  // buttons never pressed
 inline void pinMode(int, int) {}
 inline void digitalWrite(int, int) {}

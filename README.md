@@ -53,7 +53,7 @@ The display is 64 px wide and 16 px tall. Text is drawn at size 2 (12 x 16 px pe
 
 The cart powers up in program 0 (off). Use the top button for the next program and the bottom button for the previous one. Both wrap around.
 
-Programs 1–6 are built around the team logo. 7–14 are the original programs.
+Programs 1–6 are built around the team logo, 7–11 are rainbow themes, and 12–19 are the original programs.
 
 | # | Side letters | Matrix |
 |---|---|---|
@@ -64,14 +64,19 @@ Programs 1–6 are built around the team logo. 7–14 are the original programs.
 | 4 | Turn cyan as the text is uncovered | **Roll:** slice rolls across uncovering "SLICE 8738", then rolls back |
 | 5 | Flash cyan on the squeeze, then pulse with the chant | **Squeeze:** slice squashes and sprays juice, then the chant "SLICE! SLICE! SQUEEZE!" one word at a time |
 | 6 | Fill from the bottom, then turn cyan | **Sunrise:** slice rises like a sun, digits fly out into place |
-| 7 | Whole cart fades through the rainbow | Scrolling chant, whole phrase changes color |
-| 8 | Whole cart fades through the rainbow | Scrolling chant, each letter a different color |
-| 9 | Sound-reactive VU meter (orange) | Red `SLICE` / `8738` flashing |
-| 10 | Orange blink | Inverted (black on orange) `SLICE` / `8738` |
-| 11 | S, L, I, C, E light one at a time | Changes along with the letters |
-| 12 | Letter by letter, then blink 3x | Scrolling orange chant |
-| 13 | One rainbow wrapping side → matrix → side | `8738` / `SLICE` shown as a shadow in the rainbow |
-| 14 | White "headlights" fading in and out | Inverted white `SLICE` / `8738` |
+| 7 | Each letter its own color, rotating | **Rainbow slice:** logo with each segment a different color rotating round; digits match their segments |
+| 8 | Rainbow flowing up the letters | **Rainbow wave:** big SLICE / 8738 filled with a sweeping diagonal rainbow |
+| 9 | Swirling plasma colors | **Plasma:** full-screen swirling rainbow with SLICE / 8738 cut out in black |
+| 10 | Rainbow sparkles | **Confetti:** rainbow confetti twinkling behind white SLICE / 8738 |
+| 11 | Rainbow sound meter | **Rainbow beat:** sound-reactive rainbow equalizer bars with falling peak dots |
+| 12 | Whole cart fades through the rainbow | Scrolling chant, whole phrase changes color |
+| 13 | Whole cart fades through the rainbow | Scrolling chant, each letter a different color |
+| 14 | Sound-reactive VU meter (orange) | Red `SLICE` / `8738` flashing |
+| 15 | Orange blink | Inverted (black on orange) `SLICE` / `8738` |
+| 16 | S, L, I, C, E light one at a time | Changes along with the letters |
+| 17 | Letter by letter, then blink 3x | Scrolling orange chant |
+| 18 | One rainbow wrapping side → matrix → side | `8738` / `SLICE` shown as a shadow in the rainbow |
+| 19 | White "headlights" fading in and out | Inverted white `SLICE` / `8738` |
 
 The current program number is printed to the serial monitor at 500000 baud.
 
@@ -84,12 +89,15 @@ These are recorded from the real sketch running in a PC simulator (see [Regenera
 | ![1](previews/01-team-logo.gif) | ![2](previews/02-logo-zoom.gif) |
 | ![3](previews/03-logo-spin.gif) | ![4](previews/04-logo-roll.gif) |
 | ![5](previews/05-logo-squeeze.gif) | ![6](previews/06-logo-sunrise.gif) |
-| ![7](previews/07-rainbow-chant.gif) | ![8](previews/08-rainbow-letters-chant.gif) |
-| ![9](previews/09-sound-meter.gif) | ![10](previews/10-blink-inverted.gif) |
-| ![11](previews/11-letter-by-letter.gif) | ![12](previews/12-letters-blink-chant.gif) |
-| ![13](previews/13-vertical-rainbow.gif) | ![14](previews/14-headlights.gif) |
+| ![7](previews/07-rainbow-slice.gif) | ![8](previews/08-rainbow-wave.gif) |
+| ![9](previews/09-plasma.gif) | ![10](previews/10-confetti.gif) |
+| ![11](previews/11-rainbow-beat.gif) | ![12](previews/12-rainbow-chant.gif) |
+| ![13](previews/13-rainbow-letters-chant.gif) | ![14](previews/14-sound-meter.gif) |
+| ![15](previews/15-blink-inverted.gif) | ![16](previews/16-letter-by-letter.gif) |
+| ![17](previews/17-letters-blink-chant.gif) | ![18](previews/18-vertical-rainbow.gif) |
+| ![19](previews/19-headlights.gif) |  |
 
-Program 9 uses a fake 120 BPM beat as the microphone input.
+Programs 11 and 14 use a fake 120 BPM beat as the microphone input.
 
 ### The logo
 
@@ -172,6 +180,10 @@ Side effects do the same with `startSide()`, `timeInSideSequence` and `restartSi
 | `sideLetters(cyanMask, litMask, level)` | Side letters cyan / orange / off by bitmask (bit 0 = S), only updates the strip when it changes |
 | `solidColor(r, g, b)` | Side strip one steady color |
 | `phase(t, start, end)`, `easeOutCubic(t)`, ... | Animation timing helpers |
+| `hueToRGB(hue, r, g, b)` / `hueColor(hue, level)` | Rainbow color for a hue 0–255 (wraps), for the strip / the matrix |
+| `setRowHue(row, hue, level)` | One row of the side letters in a rainbow color |
+| `sin8(x)` | Fast smooth wave (0–255) for plasma-style effects |
+| `micLevel()` | Microphone volume 0–255, using the two pots for floor and gain |
 | `ColorWheel.rollingRainbow(jump)` | Step through the rainbow; read `.red/.green/.blue` |
 
 ## Regenerating the previews
