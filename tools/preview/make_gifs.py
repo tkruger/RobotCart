@@ -32,7 +32,7 @@ PROGRAMS = {
     4: ("logo-roll", "Logo roll", 6.5),
     5: ("logo-squeeze", "Logo squeeze", 4.3),
     6: ("logo-sunrise", "Logo sunrise", 6.6),
-    7: ("rainbow-slice", "Rainbow slice", 3.1),
+    7: ("prism-logo", "Prism logo", 4),
     8: ("rainbow-wave", "Rainbow wave", 4.1),
     9: ("plasma", "Plasma", 6),
     10: ("confetti", "Confetti", 5),

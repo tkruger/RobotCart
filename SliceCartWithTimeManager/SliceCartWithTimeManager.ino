@@ -587,9 +587,9 @@ void loop() {
       break;
 
     // ----- Rainbow programs -----
-    // 7: Logo with rainbow segments, digits and letters rotating round
+    // 7: Logo with a soft rainbow sheen sweeping across it every few seconds
     case 7:
-      rainbowSlice();
+      prismLogo();
       break;
     // 8: Big SLICE / 8738 filled with a sweeping rainbow, rainbow up the sides
     case 8:
@@ -1877,38 +1877,113 @@ const char *sliceOr8738() {
 }
 
 // ---------------------------------------------------------------------------
-// Program: rainbow slice
+// Program: prism logo
 // ---------------------------------------------------------------------------
 
-/**
- * The logo with each segment of the slice a different color, rotating
- * round. Each digit of 8738 is the same color as its segment, and the letters
- * of SLICE are a rainbow too. Each side letter is its own color, rotating.
- **/
-void rainbowSlice() {
-  startSide("rainbowSlice");
-  startScroll("rainbowSlice");
-  uint8_t base = rainbowBase();
+// A sheen sweeps across every SHEEN_PERIOD ms and takes SHEEN_SWEEP ms to cross
+#define SHEEN_PERIOD 4000
+#define SHEEN_SWEEP 1800
+// Half the width of the rainbow band, in pixels
+#define SHEEN_WIDTH 10
+// Whether the plain logo is already showing (so we don't redraw it every frame)
+bool prismStaticDrawn = false;
 
-  uint16_t segColors[4];
-  for (int k = 0; k < 4; k++) segColors[k] = hueColor(base + k * 64, 255);
+// The LOGO table's code (0-11) for a pixel; see the LOGO comment
+int logoCode(int x, int y) {
+  char c = pgm_read_byte(&LOGO[y][x]);
+  return (c <= '9') ? c - '0' : c - 'A' + 10;
+}
+
+/**
+ * How much of the sheen lands on something `d` pixels from the middle of the
+ * band (0 = none, 1 = full), and the soft pastel rainbow color it adds there.
+ * Returns false if it's outside the band.
+ **/
+bool sheenAt(float d, float &amount, uint8_t &r, uint8_t &g, uint8_t &b) {
+  if (d <= -SHEEN_WIDTH || d >= SHEEN_WIDTH) return false;
+  float k = 1 - fabs(d) / SHEEN_WIDTH;
+  amount = k * k * (3 - 2 * k);  // smooth falloff at the edges
+  // Spread the rainbow across the band, mixed halfway to white so it looks
+  // like light on foil rather than paint
+  hueToRGB((uint8_t)(128 + d * 10), r, g, b);
+  r = r / 2 + 128;
+  g = g / 2 + 128;
+  b = b / 2 + 128;
+  return true;
+}
+
+// Mix from color a to color b by amount (0-1)
+uint8_t mix8(uint8_t a, uint8_t b, float amount) {
+  return a + (b - a) * amount;
+}
+
+/**
+ * The team logo in its normal colors. Every few seconds a soft rainbow sheen
+ * sweeps across it diagonally, like light catching a holographic sticker,
+ * lighting up the face of the slice as it passes. The side letters stay
+ * orange with the same sheen sweeping up them.
+ **/
+void prismLogo() {
+  startSide("prismLogo");
+  if (startScroll("prismLogo")) prismStaticDrawn = false;
+
+  unsigned long t = timeInScrollSequence % SHEEN_PERIOD;
+  if (t >= SHEEN_SWEEP) {
+    // Between sweeps: just the plain logo, drawn once
+    if (!prismStaticDrawn) {
+      drawLogo(0);
+      setAll(SIDE_ORANGE_R, SIDE_ORANGE_G, SIDE_ORANGE_B);
+      prismStaticDrawn = true;
+    }
+    return;
+  }
+  prismStaticDrawn = false;
+
+  // Where the middle of the band is, sweeping from off the left to off the right
+  float progress = easeInOutCubic(t / (float)SHEEN_SWEEP);
+  float band = lerp(-SHEEN_WIDTH - 8, matrix.width() + SHEEN_WIDTH + 8, progress);
 
   matrix.clear();
-  drawSliceSegments(slicePose(15, 0, 15, 0), segColors, false);
-  for (int i = 0; i < 5; i++) {
-    uint16_t c = hueColor(base + i * 30, 255);
-    matrix.drawChar(LOGO_TEXT_X + i * 6, 0, "SLICE"[i], c, c, 1);
-  }
-  for (int k = 0; k < 4; k++) {
-    matrix.drawChar(LOGO_NUMBER_X + k * 6, LOGO_NUMBER_Y, "8738"[k], segColors[k], segColors[k], 1);
+  for (int y = 0; y < LOGO_HEIGHT; y++) {
+    for (int x = 0; x < LOGO_WIDTH; x++) {
+      int code = logoCode(x, y);
+      if (code == 0) continue;  // background stays black
+
+      // Normal logo color (inside of the slice is black)
+      uint8_t r = 0, g = 0, b = 0;
+      float strength = 0.8;
+      if (code == 1) { r = 255; g = 127; b = 0; }                 // orange
+      else if (code == 2) { r = 255; g = 255; b = 255; }          // white
+      else if (code >= 8) { r = 0; g = 220; b = 255; }            // cyan
+      else strength = 0.35;                                       // slice face: faint
+
+      // The band leans so it sweeps diagonally
+      float amount;
+      uint8_t sr, sg, sb;
+      if (sheenAt(x - band + (y - 8) * 0.6, amount, sr, sg, sb)) {
+        amount *= strength;
+        r = mix8(r, sr, amount);
+        g = mix8(g, sg, amount);
+        b = mix8(b, sb, amount);
+      }
+      if (r || g || b) matrix.drawPixel(x, y, matrix.Color(r, g, b));
+    }
   }
   showMatrix();
 
-  strip.clear();
-  for (int l = 0; l < 5; l++) {
-    uint8_t r, g, b;
-    hueToRGB(base + l * 51, r, g, b);
-    fillLetter(l + 1, r, g, b);
+  // Side letters: the same sheen sweeping up from the E to the S
+  float rowBand = lerp(-SHEEN_WIDTH, 43 + SHEEN_WIDTH, progress);
+  for (int row = 0; row < 43; row++) {
+    uint8_t r = SIDE_ORANGE_R, g = SIDE_ORANGE_G, b = SIDE_ORANGE_B;
+    float amount;
+    uint8_t sr, sg, sb;
+    if (sheenAt(row - rowBand, amount, sr, sg, sb)) {
+      amount *= 0.8;
+      r = mix8(r, sr, amount);
+      g = mix8(g, sg, amount);
+      b = mix8(b, sb, amount);
+    }
+    setRow(row, r, g, b);
   }
   updateLeds();
 }

@@ -64,7 +64,7 @@ Programs 1–6 are built around the team logo, 7–11 are rainbow themes, and 12
 | 4 | Turn cyan as the text is uncovered | **Roll:** slice rolls across uncovering "SLICE 8738", then rolls back |
 | 5 | Flash cyan on the squeeze, then pulse with the chant | **Squeeze:** slice squashes and sprays juice, then the chant builds up word by word: "SLICE! SLICE!" over "SQUEEZE!!" |
 | 6 | Fill from the bottom, then turn cyan | **Sunrise:** slice rises like a sun, digits fly out into place |
-| 7 | Each letter its own color, rotating | **Rainbow slice:** logo with each segment a different color rotating round; digits match their segments |
+| 7 | Orange, with the same sheen sweeping up them | **Prism logo:** the logo in its normal colors, with a soft rainbow sheen sweeping across it every few seconds like a holographic sticker |
 | 8 | Rainbow flowing up the letters | **Rainbow wave:** big SLICE / 8738 filled with a sweeping diagonal rainbow |
 | 9 | Swirling plasma colors | **Plasma:** full-screen swirling rainbow with SLICE / 8738 cut out in black |
 | 10 | Rainbow sparkles | **Confetti:** rainbow confetti twinkling behind white SLICE / 8738 |
@@ -89,7 +89,7 @@ These are recorded from the real sketch running in a PC simulator (see [Regenera
 | ![1](previews/01-team-logo.gif) | ![2](previews/02-logo-zoom.gif) |
 | ![3](previews/03-logo-spin.gif) | ![4](previews/04-logo-roll.gif) |
 | ![5](previews/05-logo-squeeze.gif) | ![6](previews/06-logo-sunrise.gif) |
-| ![7](previews/07-rainbow-slice.gif) | ![8](previews/08-rainbow-wave.gif) |
+| ![7](previews/07-prism-logo.gif) | ![8](previews/08-rainbow-wave.gif) |
 | ![9](previews/09-plasma.gif) | ![10](previews/10-confetti.gif) |
 | ![11](previews/11-rainbow-beat.gif) | ![12](previews/12-rainbow-chant.gif) |
 | ![13](previews/13-rainbow-letters-chant.gif) | ![14](previews/14-sound-meter.gif) |
