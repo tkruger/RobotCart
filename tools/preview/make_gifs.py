@@ -30,7 +30,7 @@ PROGRAMS = {
     2: ("logo-zoom", "Logo zoom", 6.4),
     3: ("logo-spin", "Logo spin", 5.2),
     4: ("logo-roll", "Logo roll", 6.5),
-    5: ("logo-squeeze", "Logo squeeze", 3.6),
+    5: ("logo-squeeze", "Logo squeeze", 4.3),
     6: ("logo-sunrise", "Logo sunrise", 6.6),
     7: ("rainbow-chant", "Rainbow + color-changing chant", 8),
     8: ("rainbow-letters-chant", "Rainbow + rainbow-letter chant", 8),

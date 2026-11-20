@@ -1620,11 +1620,22 @@ void logoRoll() {
 
 /**
  * The slice gets squashed, wobbles back into shape and sprays cyan juice
- * drops that arc up and fall. Then "SLICE!" / "SQUEEZE!" pops up.
- * The side letters flash cyan on the squeeze and fade back to orange.
+ * drops that arc up and fall. Then the chant flashes up one word at a time:
+ * SLICE! ... SLICE! ... SQUEEZE! ("SLICE! SLICE!" is too wide for one line).
+ * The side letters flash cyan on the squeeze and fade back to orange, then
+ * pulse orange on each SLICE! and go cyan on SQUEEZE!.
  **/
+// Which word of the chant logoSqueeze() shows at time t:
+// 0 = none, 1 = first SLICE!, 2 = second SLICE!, 3 = SQUEEZE!
+int squeezeChantWord(unsigned long t) {
+  if (t >= 1900 && t < 2400) return 1;
+  if (t >= 2550 && t < 3050) return 2;
+  if (t >= 3200 && t < 4200) return 3;
+  return 0;
+}
+
 void logoSqueeze() {
-  unsigned long t = logoAnimTime("logoSqueeze", 3600);
+  unsigned long t = logoAnimTime("logoSqueeze", 4300);
 
   // How squashed it is: squash for 250ms, then wobble back
   float squash = 0;
@@ -1644,10 +1655,10 @@ void logoSqueeze() {
   matrix.clear();
   drawSlice(p, 0, DIM_CYAN, false);
 
-  if (t >= 1900) {
-    drawSmallText(14, 0, "SLICE!", WHITE, 6, -1000);
-    drawSmallText(8, LOGO_NUMBER_Y, "SQUEEZE!", CYAN, 8, -1000);
-  }
+  // The chant, one word at a time, centered
+  int word = squeezeChantWord(t);
+  if (word == 1 || word == 2) drawSmallText(14, 4, "SLICE!", WHITE, 6, -1000);
+  if (word == 3) drawSmallText(8, 4, "SQUEEZE!", CYAN, 8, -1000);
 
   // Juice drops, launched from along the flat edge when it's squeezed
   if (t >= 250) {
@@ -1666,9 +1677,14 @@ void logoSqueeze() {
   }
   showMatrix();
 
-  // Side: cyan on the squeeze, fading back to orange
+  // Side: cyan on the squeeze, fading back to orange, then pulsing with the chant
   float fade = phase(t, 400, 1200);
-  if (t < 200) {
+  if (word == 3) {
+    sideColor(SIDE_CYAN_R, SIDE_CYAN_G, SIDE_CYAN_B);
+  } else if (t >= 1900 && word == 0) {
+    // Dim between the words so each SLICE! is a beat
+    sideColor(scale8(SIDE_ORANGE_R, 60), scale8(SIDE_ORANGE_G, 60), scale8(SIDE_ORANGE_B, 60));
+  } else if (t < 200) {
     sideColor(SIDE_ORANGE_R, SIDE_ORANGE_G, SIDE_ORANGE_B);
   } else {
     sideColor(lerp(SIDE_CYAN_R, SIDE_ORANGE_R, fade),
