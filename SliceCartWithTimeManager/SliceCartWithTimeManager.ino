@@ -1,3 +1,27 @@
+/**
+ * SliceCartWithTimeManager
+ * ========================
+ * Lighting controller for the SLICE robot cart.
+ *
+ * The cart has two lighting systems that are driven independently each loop():
+ *
+ *   1. The "side" LED strip (300 WS2812 pixels on DATA_PIN) that forms the
+ *      illuminated S-L-I-C-E letters on both sides of the cart, plus a white
+ *      internal illuminator.
+ *   2. The "matrix" display: a 64x16 NeoPixel matrix built from four 32x8
+ *      panels (2 x 2 tiles) on DISPLAY_PIN, used for text such as
+ *      "SLICE" / "8738" / "SLICE! SLICE! SQUEEZE!!".
+ *
+ * Two push buttons step forward/back through the numbered LED programs in
+ * loop(). A microphone and two potentiometers feed the sound-reactive
+ * "noise" program.
+ *
+ * "Time manager": nothing here blocks for long. Each effect is a function
+ * called once per loop() that looks at how long it has been running
+ * (timeInSideSequence / timeInScrollSequence) and draws the right frame.
+ * This lets a side effect and a matrix effect run at the same time.
+ */
+
 #include <Adafruit_GFX.h>
 #include <Adafruit_NeoMatrix.h>
 #include <Adafruit_NeoPixel.h>
@@ -6,12 +30,17 @@
 #define PSTR  // Make Arduino Due happy
 #endif
 
+// ---------------------------------------------------------------------------
+// Hardware configuration
+// ---------------------------------------------------------------------------
+
 // How many leds in your strip?
 #define NUM_LEDS 300
 // What pin is it on
 #define DATA_PIN 4
 
-// Matrix definition
+// Matrix definition: each tile is 32 wide x 8 tall, arranged 2 across x 2 down,
+// giving a 64 x 16 pixel display in total
 #define GRID_NUM_ROWS 8
 #define GRID_NUM_COLS 32
 #define GRID_TILES_X 2
@@ -19,27 +48,39 @@
 // Matrix Data Pin
 #define DISPLAY_PIN 7
 
-// How wide is a single charater in LEDs
+// How wide is a single charater in LEDs at text size 1 (5px glyph + 1px gap).
+// Text is drawn at size 2, so most math below multiplies this by 2 (12px/char),
+// which means about 5 characters fit across the 64px display at once.
 #define CHAR_PIX_WIDTH 6
-// Button pin for up
+// Button pin for up (read as active HIGH, so the button needs a pull-down resistor)
 #define TOP_BUTTON_PIN 9
-// Button pin for down
+// Button pin for down (active HIGH, same as above)
 #define BOTTOM_BUTTON_PIN 8
-// Min variable transistor
+// Min variable resistor (potentiometer): noise floor for the mic program
 #define MIN_PIN A1
-// Max variable transistor
+// Max variable resistor (potentiometer): sensitivity/ceiling for the mic program
 #define MAX_PIN A2
 
-// How many LED programs do we have to loop through
-#define LED_PROGRAMS 9
+// How many LED programs do we have to loop through (cases 0..LED_PROGRAMS-1 in loop()).
+// Remember to bump this when adding a new case.
+#define LED_PROGRAMS 10
 
 // Where is the mic connected?
 #define MIC_PIN A0
+
+// ---------------------------------------------------------------------------
+// ColorWheel
+// ---------------------------------------------------------------------------
 
 /**
  * Defined a group of variables focused on rolling through the colorwheel
  * at a given speed. Allows you to create a colorwheel then spin it at a given speed
  * which allows you to get red, green and blue values out for that color
+ *
+ * The wheel walks around the edge of the RGB cube in 6 phases:
+ *   red -> yellow -> green -> cyan -> blue -> magenta -> red
+ * Each call to rollingRainbow(jump) moves one channel by `jump` (0-255).
+ * Bigger jumps = faster color changes, fewer distinct colors.
  **/
 class ColorWheel {
   public:
@@ -50,7 +91,7 @@ class ColorWheel {
 
 	  ColorWheel() {}
 
-    // Sets the colorwheel to SLICE orange
+    // Resets the colorwheel back to the start of the rainbow (pure red, phase 0)
     void resetRainbow() {
       state = 0;
       red = 255;
@@ -72,10 +113,13 @@ class ColorWheel {
     }
 
     /**
-     * Roll through the rainbow
+     * Roll through the rainbow by one step of size `jump`.
+     * Each phase ramps a single channel up or down until it hits 0 or 255,
+     * then moves to the next phase.
      **/
     void rollingRainbow(int jump) {
       switch (state) {
+        // Phase 0: red -> yellow (green goes up)
         case 0:
           if (green == 255) {
             state = 1;
@@ -83,6 +127,7 @@ class ColorWheel {
             green = green + jump;
           }
           break;
+        // Phase 1: yellow -> green (red goes down)
         case 1:
           if (red == 0) {
             state = 2;
@@ -90,6 +135,7 @@ class ColorWheel {
             red = red - jump;
           }
           break;
+        // Phase 2: green -> cyan (blue goes up)
         case 2:
           if (blue == 255) {
             state = 3;
@@ -97,6 +143,7 @@ class ColorWheel {
             blue = blue + jump;
           }
           break;
+        // Phase 3: cyan -> blue (green goes down)
         case 3:
           if (green == 0) {
             state = 4;
@@ -104,6 +151,7 @@ class ColorWheel {
             green = green - jump;
           }
           break;
+        // Phase 4: blue -> magenta (red goes up)
         case 4:
           if (red == 255) {
             state = 5;
@@ -111,6 +159,7 @@ class ColorWheel {
             red = red + jump;
           }
           break;
+        // Phase 5: magenta -> red (blue goes down), then wrap to phase 0
         case 5:
           if (blue == 0) {
             state = 0;
@@ -142,11 +191,17 @@ class ColorWheel {
     }
   
   private:
+    // Which of the 6 rainbow phases we are in (0-5)
     int state = 0;
+    // Currently unused - left over from an earlier implementation
     bool red_done = false;
     bool green_done = false;
     bool blue_done = false;
 };
+
+// ---------------------------------------------------------------------------
+// Hardware objects
+// ---------------------------------------------------------------------------
 
 // MATRIX DECLARATION:
 // Parameter 1 = width of NeoPixel matrix
@@ -179,6 +234,9 @@ class ColorWheel {
                                                NEO_GRB + NEO_KHZ800);
 
 */
+// The actual display: four 32x8 tiles (each wired as zigzag columns starting
+// bottom-right), with the tiles themselves chained top-right first in zigzag rows.
+// Result is one logical 64 x 16 canvas: x = 0..63 left to right, y = 0..15 top to bottom.
 Adafruit_NeoMatrix matrix = Adafruit_NeoMatrix(GRID_NUM_COLS, GRID_NUM_ROWS, GRID_TILES_X, GRID_TILES_Y, DISPLAY_PIN,
                                                NEO_TILE_TOP + NEO_TILE_RIGHT + NEO_TILE_ROWS + NEO_TILE_ZIGZAG +
                                                NEO_MATRIX_BOTTOM + NEO_MATRIX_RIGHT + NEO_MATRIX_COLUMNS + NEO_MATRIX_ZIGZAG,
@@ -196,7 +254,12 @@ Adafruit_NeoPixel strip(NUM_LEDS, DATA_PIN, NEO_GRB + NEO_KHZ800);
 //   NEO_RGB     Pixels are wired for RGB bitstream (v1 FLORA pixels, not v2)
 //   NEO_RGBW    Pixels are wired for RGBW bitstream (NeoPixel RGBW products)
 
-// A simple list of rainbow colors starting with red to loop through
+// ---------------------------------------------------------------------------
+// Colors and shared state
+// ---------------------------------------------------------------------------
+
+// A simple list of rainbow colors starting with red to loop through.
+// These are 16-bit (RGB565) matrix colors, only for use with `matrix`, not `strip`.
 const uint16_t rainbowColors[] = {
   matrix.Color(255, 0, 0),
   matrix.Color(255, 127, 0),
@@ -216,12 +279,53 @@ const uint16_t rainbowColors[] = {
 const uint16_t ORANGE = matrix.Color(255, 127, 0);
 const uint16_t WHITE = matrix.Color(255, 255, 255);
 const uint16_t BLACK = matrix.Color(0, 0, 0);
+const uint16_t CYAN = matrix.Color(0, 220, 255);
+// Dim cyan used to "fill" a lit segment of the logo's orange slice
+const uint16_t DIM_CYAN = matrix.Color(0, 90, 110);
+
+// ---------------------------------------------------------------------------
+// Team logo (64 x 16 pixel art)
+//
+// Half orange slice on the left, "SLICE" (white) over "8738" (cyan) on the right.
+// Each character is one pixel, written as a hex digit:
+//   0     off
+//   1     orange (rind, segment dividers, hub)
+//   2     white  ("SLICE")
+//   4-7   inside slice segment 0-3, left to right (black unless lit)
+//   8-B   part of digit 0-3 of "8738" (cyan, or white when highlighted)
+// Segment N of the slice lines up with digit N of 8738, like the real logo.
+//
+// Generated by tools/logo_gen.py - edit and re-run that rather than hand editing.
+// Stored in PROGMEM (flash) so it doesn't use any of the Arduino's RAM.
+// ---------------------------------------------------------------------------
+#define LOGO_WIDTH 64
+#define LOGO_HEIGHT 16
+const char LOGO[LOGO_HEIGHT][LOGO_WIDTH + 1] PROGMEM = {
+  "1111111111111111111111111111111000022220200000022200022200222220",
+  "1144444444444111117777777777711000200000200000002000200020200000",
+  "1144444444441151611777777777711000200000200000002000200000200000",
+  "1144444444411551661177777777711000022200200000002000200000222200",
+  "0144444444115551666117777777710000000020200000002000200000200000",
+  "0114444441155551666611777777110000000020200000002000200020200000",
+  "0114444411555551666661177777110000222200222220022200022200222220",
+  "0011444115555551666666117771100000000000000000000000000000000000",
+  "0011441155555551666666611771100000000000000000000000000000000000",
+  "00011115555555516666666611110000000000888009999900AAA000BBB00000",
+  "0000115555555551666666666110000000000800080000090A000A0B000B0000",
+  "00000111555555516666666111000000000008000800009000000A0B000B0000",
+  "000000111555555166666611100000000000008880000900000AA000BBB00000",
+  "00000000111155516661111000000000000008000800900000000A0B000B0000",
+  "0000000000111111111110000000000000000800080090000A000A0B000B0000",
+  "00000000000000111000000000000000000000888000900000AAA000BBB00000"
+};
 
 // Colorwheels to rotate through for side panels and matrix effects
 ColorWheel sideColorWheel = ColorWheel();
 ColorWheel matrixColorWheel = ColorWheel();
 
-// The offset from the left for displaying text on the matrix
+// The offset from the left for displaying text on the matrix.
+// Scrolling text starts at matrix.width() (just off the right edge) and counts
+// down into negative numbers until the whole phrase has left the screen.
 int matrixOffset = matrix.width();
 
 // Reset both rainbow color wheels and also reset the matrix offset
@@ -239,29 +343,55 @@ void resetRainbowScroll() {
 //Leds 171 to 213 compose left column 1
 //Leds 256 to 214 compose left column 2
 //Leds 257 to 298 compose left column 3
+//
+// Each column is ~43 LEDs tall and runs through all five letters. "Rows" (see
+// setRow) count from 0 at the bottom of the E up to 42 at the top of the S, and
+// the same row is lit in all six columns at once. Columns 2 and 5 are wired in
+// reverse, which is why setRow uses 84 - row and 256 - row for them.
 
-// Microphone volume
+// Microphone volume (raw analogRead, 0-1023)
 int micVolume = 0;
 
 //Method Switcher Variables
+// Current height of the sound meter in the noise() program (falls by 1 each loop)
 int rows = 0;
+// Which LED program is selected (0 = off). Changed by the buttons.
 int sequence = 0;
+// The program that ran last loop, to detect when the buttons changed it
+int lastSequence = 0;
 
 //FastLoop Variables
+// millis() captured at the start of each loop()
+// NOTE: on 8-bit Arduinos `int` is 16 bits, so this wraps every ~32.7s. The
+// subtraction below still works across the wrap for short durations.
 int time = 0;
 
-// Variables to track the state of the side panel sequences
+// Variables to track the state of the side panel sequences.
+// Each side effect sets currentSideMethod to its own name the first time it runs,
+// which is how it knows to reset its start time and do any first-run setup.
 int sideSequenceStartTime = 0;
 String currentSideMethod = "";
+// Milliseconds since the current side effect (re)started
 int timeInSideSequence = 0;
+// Set true by restartSide() when a side effect finishes one full cycle
 bool sideFinished = false;
 
-// Variables to track the state of the matrix 
+// Variables to track the state of the matrix, same pattern as the side panels
 int scrollSequenceStartTime = 0;
 String currentScrollMethod = "";
+// Milliseconds since the current matrix effect (re)started
 int timeInScrollSequence = 0;
+// Set true by restartScroll() when a matrix effect finishes one full cycle
 bool scrollFinished = false;
 
+// ---------------------------------------------------------------------------
+// Setup and main loop
+// ---------------------------------------------------------------------------
+
+/**
+ * One-time hardware init: start serial, both LED chains, and set default
+ * text options on the matrix (no wrap, size 2 = 12x16 px per character).
+ **/
 void setup() {
   Serial.begin(500000);
   pinMode(LED_BUILTIN, OUTPUT);
@@ -277,6 +407,13 @@ void setup() {
   resetRainbowScroll();
 }
 
+/**
+ * Runs forever. Each pass:
+ *   1. Samples inputs and updates the sequence timers
+ *   2. Checks the buttons to change program
+ *   3. Calls the side-panel effect and matrix effect for the current program,
+ *      each of which draws a single frame and returns
+ **/
 void loop() {
   //Choose HTML color codes to use here: https://g.co/kgs/S9Anr7
   //Run the method of your choice below
@@ -294,6 +431,7 @@ void loop() {
   }
 
 
+  // Top button = next program, bottom button = previous program (wraps around)
   if (digitalRead(TOP_BUTTON_PIN) == 1) {
     sequence++;
     while (digitalRead(TOP_BUTTON_PIN) == 1) {
@@ -320,8 +458,19 @@ void loop() {
     Serial.println(sequence);
   }
 
+  // Changed program? Forget the current effects so the new program's effects
+  // always run their first-time setup (otherwise e.g. solidColor() wouldn't
+  // redraw after program 0 cleared the strip).
+  if (sequence != lastSequence) {
+    lastSequence = sequence;
+    currentSideMethod = "";
+    currentScrollMethod = "";
+  }
 
+  // The LED programs. Most pair one side-panel effect with one matrix effect.
+  // To add a program: add a case here and increase LED_PROGRAMS.
   switch (sequence) {
+    // 0: Everything off
     case 0:
       resetRainbowScroll();
       strip.clear();
@@ -329,34 +478,48 @@ void loop() {
       matrix.clear();
       matrix.show();
       break;
+    // 1: Fading rainbow sides + scrolling chant that changes color as a whole
     case 1:
       rainbow(15);
       rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 2, 15, 2, false);
       break;
+    // 2: Fading rainbow sides + scrolling chant with each letter a different color
     case 2:
       rainbow(15);
       rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 2, 85, 2, true);
       break;
+    // 3: Sound-reactive VU meter on the sides + red "SLICE" / "8738" flashing
     case 3:
       noise(micVolume, analogRead(MAX_PIN), analogRead(MIN_PIN));
       alternatePhrases("SLICE", "8738", rainbowColors[0], 800, 300);
       break;
+    // 4: Orange blinking sides + inverted (black on orange) "SLICE" / "8738"
     case 4:
       blink(255, 50, 0);
       alternatePhrases("SLICE", "8738", ORANGE, 3000, 0, true);
       break;
+    // 5: Light up S, L, I, C, E one at a time, with matching matrix text
     case 5:
       cycleAllLetters(255, 50, 0, 2, true);
       break;
+    // 6: Letter-by-letter then blink the whole word + scrolling orange chant
     case 6:
       cycleAndBlink();
       coloredScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 2, 2, ORANGE);
       break;
+    // 7: One continuous rainbow wrapping side -> matrix -> side, text in shadow
     case 7:
       verticalRainbow();
       break;
+    // 8: White "headlights" fading in and out with inverted text
     case 8:
       headLights();
+      break;
+    // 9: Solid orange sides + team logo, lighting up each slice segment and
+    //    its matching digit of 8738 in turn
+    case 9:
+      solidColor(255, 50, 0);
+      showLogo(true);
       break;
     default:
       matrix.clear();
@@ -367,12 +530,18 @@ void loop() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Side panel effects
 //
-// End setup
-//
-// Begin sequences
-//
+// Pattern every effect follows:
+//   if (!currentSideMethod.equals("myEffect")) { ...first-run setup... }
+//   look at timeInSideSequence to decide what to draw this frame
+//   call restartSide() when one full cycle is done
+// ---------------------------------------------------------------------------
 
+/**
+ * Flash all the side LEDs: 500ms on in the given color, 500ms off.
+ **/
 void blink(int red, int green, int blue) {
   // Initialize function at 0 ticks
   if (!currentSideMethod.equals("blink")) {
@@ -396,6 +565,24 @@ void blink(int red, int green, int blue) {
   restartSide();
 }
 
+/**
+ * All side LEDs one steady color. Only sends to the strip when first selected,
+ * so it doesn't slow down the loop.
+ **/
+void solidColor(int red, int green, int blue) {
+  if (!currentSideMethod.equals("solidColor")) {
+    currentSideMethod = "solidColor";
+    sideSequenceStartTime = time;
+    sideFinished = false;
+    setAll(red, green, blue);
+  }
+}
+
+/**
+ * Set every side LED to the same color and step the colorwheel forward,
+ * so the whole cart slowly fades through the rainbow.
+ * colorSpeed is the colorwheel jump per frame (bigger = faster).
+ **/
 void rainbow(int colorSpeed) {
   if (!currentSideMethod.equals("rainbow")) {
     currentSideMethod = "rainbow";
@@ -410,6 +597,15 @@ void rainbow(int colorSpeed) {
   restartSide();
 }
 
+/**
+ * Sound-reactive VU meter. Lights rows from the bottom of the E upward based
+ * on microphone volume, jumping up instantly on loud sounds and falling back
+ * down one row per frame.
+ *
+ * @param volume raw mic reading (0-1023)
+ * @param max    raw pot reading (0-1023) - turn up to make it more sensitive
+ * @param min    raw pot reading (0-1023) - noise floor subtracted from the mic
+ **/
 void noise(int volume, int max, int min) {
   if (!currentSideMethod.equals("noise")) {
     currentSideMethod = "noise";
@@ -418,14 +614,19 @@ void noise(int volume, int max, int min) {
     clearMatrix();
   }
 
+  // Subtract the noise floor (pots are divided by 4 to bring them to 0-255)
   volume -= min / 4;
   if (volume < 0) {
     volume = 0;
   }
+  // Scale up by the gain set by the two pots
+  // NOTE: this is integer division, so the gain is always a whole number
   volume = volume * (255 / ((255 - max / 4) - min / 4));
 
+  // Convert volume into a number of rows (~255 / 43 rows)
   int updatedRows = round(volume / 5.93);
 
+  // Peak-hold: only ever jump up here, the fall happens at the bottom
   if (updatedRows > rows) {
     rows = updatedRows;
   }
@@ -442,15 +643,19 @@ void noise(int volume, int max, int min) {
 
   updateLeds();
 
+  // Let the meter fall by one row each frame
   if (rows > 0) {
     rows--;
   }
 }
 
+// headLights(): true while fading up, false while fading down
 bool goingBrighter = true;
 
 /**
  * Simple method that makes the front sign light up in white like a flashlight while fading the letters
+ * The sides fade 0 -> 255 over ~2 seconds, then 255 -> 0 over the next ~2 seconds.
+ * The matrix shows inverted (black on white) "SLICE" then "8738", ~1 second each.
  **/
 void headLights() {
   if (!currentSideMethod.equals("headLights")) {
@@ -487,11 +692,16 @@ void headLights() {
   }
 }
 
+// verticalRainbow(): how many frames have been drawn, used to advance the rainbow
 int cycleCount = 0;
 
 /**
  * This will create a wrapping rainbow from one side of the cart, going over the matrix display
  * and coming back to the other side, splaying 8738 and SLICE as a shadow on the rainbow
+ *
+ * Each frame draws one long rainbow made of: 3 right-side columns, then all 64
+ * matrix columns, then 3 left-side columns. The start color shifts every frame
+ * so the rainbow appears to move.
  **/
 void verticalRainbow() {
   if (!currentSideMethod.equals("verticalRainbow")) {
@@ -510,23 +720,27 @@ void verticalRainbow() {
     // Jump forwarward to where the rainbow stopped plus one
     matrixColorWheel.resetRainbow((cycleCount * (6 + matrix.width())) + rainbowStep);
 
+    // Right side panel columns
     for (int l = 1; l <= 3; l++){
       setColumn(l, matrixColorWheel.red, matrixColorWheel.green, matrixColorWheel.blue);
       matrixColorWheel.rollingRainbow(rainbowStep);
     }
 
+    // Every column of the matrix, left to right, as a full-height vertical line
     for (int i = 0; i < matrix.width(); i++){
         //matrix.drawLine(i, 0, i, 16, matrix.Color(red, green, blue));
         matrix.drawFastVLine(i, 0, 16, matrix.Color(matrixColorWheel.red, matrixColorWheel.green, matrixColorWheel.blue));
         matrixColorWheel.rollingRainbow(rainbowStep);
     }
 
+    // Left side panel columns
     for (int l = 4; l <= 6; l++){
       setColumn(l, matrixColorWheel.red, matrixColorWheel.green, matrixColorWheel.blue);
       matrixColorWheel.rollingRainbow(rainbowStep);
     }
 
-    // Switch back and forth every 2 seconds
+    // Switch back and forth every 2 seconds. Text is drawn in black on top of
+    // the rainbow (clear = false) so it shows up as a shadow.
     if (timeInSideSequence % 4000 < 2000){
       showText("8738", BLACK, false, false);
     } else {
@@ -541,6 +755,9 @@ void verticalRainbow() {
 
 /**
  * Cycles through each of the letters lighting up S L I C E
+ * Each letter is shown for 142ms * speed (speed 2 = ~0.28s per letter).
+ * If includeMatrix is true, the matrix also changes along with the letters:
+ * colored "SLICE", then inverted "SLICE", then a scrolling "SQUEEZE!".
  **/
 void cycleAllLetters(int red, int green, int blue, int speed, boolean includeMatrix) {
   if (!currentSideMethod.equals("cycleAllLetters")) {
@@ -597,6 +814,8 @@ int groupPhase = 0;
 
 /**
  * Cycles through all of the letters than blinks the whole name
+ * Phase 1 runs cycleAllLetters() once, phases 2-4 run blink() three times,
+ * then it starts over. Moves on each time the current effect sets sideFinished.
  **/
 void cycleAndBlink() {
   if (groupPhase == 0) {
@@ -623,8 +842,13 @@ void cycleAndBlink() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Side panel helpers
+// ---------------------------------------------------------------------------
+
 /**
  * Sets a particular letter to a color
+ * letter: 1 = S, 2 = L, 3 = I, 4 = C, 5 = E (each is a range of rows)
  **/
 void setLetter(int letter, int red, int green, int blue) {
   if (letter == 1) {
@@ -671,6 +895,8 @@ void setRow(int row, int red, int green, int blue) {
 
 /**
  * Sets a particular column to a color
+ * col 1-3 are the right side panel, 4-6 are the left side panel.
+ * Does not call strip.show() - the caller must do that.
  * @param colors the rgb value to set to
  **/
 void setColumn(int col, int red, int green, int blue) {
@@ -697,7 +923,8 @@ void setColumn(int col, int red, int green, int blue) {
 }
 
 /**
- * Updates all LEDs to a color in the range provided
+ * Updates all LEDs to a color in the range provided (inclusive)
+ * Not to be confused with updateLeds() below, which pushes the strip to the LEDs.
  **/
 void updateLEDs(int start, int end, int red, int green, int blue) {
   for (int i = start; i <= end; i++) {
@@ -716,6 +943,8 @@ void setAll(int red, int green, int blue) {
 }
 
 // Display the LED states
+// Always forces the internal illuminator (LEDs 128-170) to white, then sends
+// the whole strip out at brightness 100/255.
 void updateLeds() {
   for (int i = 128; i <= 170; i++) {
     strip.setPixelColor(i, 255, 255, 255);
@@ -744,8 +973,16 @@ void restartScroll(){
   matrixOffset = matrix.width();
 }
 
+// ---------------------------------------------------------------------------
+// Matrix display effects
+//
+// Same pattern as the side effects, but using currentScrollMethod,
+// timeInScrollSequence and restartScroll().
+// Text is size 2: 12px wide per character, 16px tall, so ~5 characters fit.
+// ---------------------------------------------------------------------------
+
 /**
- * Switches back and forth showing two phrases in a paricular color, 
+ * Switches back and forth showing two phrases in a paricular color,
  * displaying each for the displayTime and pausing in black for the time in pauseBuffer
  **/
 void alternatePhrases(String text, String altText, uint16_t color, int displayTime, int pauseBuffer){
@@ -808,6 +1045,8 @@ void showText(String text, uint16_t color){
 /**
  * Simply shows text in a color, centered
  * Has the option in invert using the color as background and the text as black
+ * Pass clear = false to draw text on top of whatever is already on the matrix.
+ * Centering assumes text size 2 and only works for up to 5 characters.
  **/
 void showText(String text, uint16_t color, bool clear, bool inverted){
   if (clear) matrix.clear();
@@ -819,11 +1058,78 @@ void showText(String text, uint16_t color, bool clear, bool inverted){
     matrix.setTextColor(color);
   }
 
+  // Left padding = (display width - text width) / 2, +1 to account for the trailing gap
   int padding = (int)(((GRID_NUM_COLS * GRID_TILES_X) - ((int)text.length() * CHAR_PIX_WIDTH * 2))/2) + 1;
   matrix.setCursor(padding, 1);
   matrix.print(text);
   matrix.show();
 
+}
+
+/**
+ * Draw the team logo from the LOGO table.
+ * @param litSegment which slice segment / digit (0-3) to highlight, or -1 for none
+ **/
+void drawLogo(int litSegment) {
+  matrix.clear();
+  for (int y = 0; y < LOGO_HEIGHT; y++) {
+    for (int x = 0; x < LOGO_WIDTH; x++) {
+      // Read the hex digit out of flash and turn it into a number 0-15
+      char c = pgm_read_byte(&LOGO[y][x]);
+      int code = (c <= '9') ? c - '0' : c - 'A' + 10;
+
+      uint16_t color = BLACK;
+      if (code == 1) {
+        color = ORANGE;
+      } else if (code == 2) {
+        color = WHITE;
+      } else if (code >= 4 && code <= 7) {
+        // Inside of a slice segment: only filled when it's the lit one
+        if (code - 4 == litSegment) color = DIM_CYAN;
+      } else if (code >= 8 && code <= 11) {
+        // A digit of 8738: white when highlighted, cyan otherwise
+        color = (code - 8 == litSegment) ? WHITE : CYAN;
+      }
+
+      if (color != BLACK) matrix.drawPixel(x, y, color);
+    }
+  }
+  matrix.show();
+}
+
+// How long each step of the logo animation lasts, in ms
+#define LOGO_STEP_MS 600
+// The last logo frame drawn, so we only redraw when it changes
+int lastLogoStep = -1;
+
+/**
+ * Show the team logo. With animate = true it steps through:
+ *   plain logo -> segment 0 + "8" -> segment 1 + "7" -> segment 2 + "3" -> segment 3 + "8"
+ * then repeats. With animate = false it just shows the plain logo.
+ **/
+void showLogo(bool animate) {
+  if (!currentScrollMethod.equals("showLogo")) {
+    currentScrollMethod = "showLogo";
+    scrollSequenceStartTime = time;
+    scrollFinished = false;
+    lastLogoStep = -1;  // force a redraw
+  }
+
+  int step = 0;
+  if (animate) {
+    if (timeInScrollSequence >= LOGO_STEP_MS * 5) {
+      restartScroll();
+    } else {
+      step = timeInScrollSequence / LOGO_STEP_MS;
+    }
+  }
+
+  // Drawing 1024 pixels takes a while, so skip it if nothing changed
+  if (step == lastLogoStep) return;
+  lastLogoStep = step;
+
+  // step 0 = nothing lit, steps 1-4 = segments 0-3
+  drawLogo(step - 1);
 }
 
 /**
@@ -873,10 +1179,22 @@ void rainbowScrollingText(String scrollText, int pauseTime, int colorSpeed, int 
   scrollingText(scrollText, pauseTime, moveDelta, rainbowText, colorSpeed);
 }
 
+/**
+ * Draw one frame of scrolling text using whatever text color is already set.
+ **/
 void scrollingText(String scrollText, int pauseTime, int moveDelta) {
   scrollingText(scrollText, pauseTime, moveDelta, false, 0);
 }
 
+/**
+ * Core scroller used by all scrolling text effects. Draws one frame:
+ * prints the text at matrixOffset, then moves it moveDelta pixels left.
+ * When the text has completely left the screen it restarts from the right.
+ *
+ * @param pauseTime  delay in ms after each frame (this one does block)
+ * @param rainbow    if true each character gets the next colorwheel color
+ * @param colorSpeed colorwheel jump between characters when rainbow is true
+ **/
 void scrollingText(String scrollText, int pauseTime, int moveDelta, bool rainbow, int colorSpeed) {
   matrix.clear();
 
@@ -893,6 +1211,7 @@ void scrollingText(String scrollText, int pauseTime, int moveDelta, bool rainbow
     matrix.print(scrollText);
   }
 
+  // Width of the whole phrase in pixels at text size 2
   int length = (int)scrollText.length() * CHAR_PIX_WIDTH * 2;
   matrixOffset = matrixOffset - moveDelta;
   if (matrixOffset < -length) {
