@@ -1652,18 +1652,42 @@ void logoRoll() {
 
 /**
  * The slice gets squashed, wobbles back into shape and sprays cyan juice
- * drops that arc up and fall. Then the chant flashes up one word at a time:
- * SLICE! ... SLICE! ... SQUEEZE! ("SLICE! SLICE!" is too wide for one line).
+ * drops that arc up and fall. Then the chant builds up one word at a time:
+ *     SLICE! SLICE!
+ *       SQUEEZE!!
  * The side letters flash cyan on the squeeze and fade back to orange, then
- * pulse orange on each SLICE! and go cyan on SQUEEZE!.
+ * flash orange on each SLICE! and go cyan on SQUEEZE!!.
  **/
-// Which word of the chant logoSqueeze() shows at time t:
-// 0 = none, 1 = first SLICE!, 2 = second SLICE!, 3 = SQUEEZE!
-int squeezeChantWord(unsigned long t) {
-  if (t >= 1900 && t < 2400) return 1;
-  if (t >= 2550 && t < 3050) return 2;
-  if (t >= 3200 && t < 4200) return 3;
-  return 0;
+// When each word of the chant appears in logoSqueeze() (ms into the loop)
+#define CHANT_SLICE_1 1900
+#define CHANT_SLICE_2 2550
+#define CHANT_SQUEEZE 3200
+
+/**
+ * Draw text in the small font packed tighter than usual: "!" takes 2 pixels
+ * instead of 6 and a space takes 1, so "SLICE! SLICE!" fits in 64 pixels.
+ * Returns the x just past the end of the text.
+ **/
+int drawTightText(int x, int y, const char *text, uint16_t color, bool draw) {
+  for (int i = 0; text[i]; i++) {
+    if (text[i] == '!') {
+      // The "!" glyph sits in the middle column of its 5, so shift it left
+      if (draw) matrix.drawChar(x - 2, y, '!', color, color, 1);
+      x += 2;
+    } else if (text[i] == ' ') {
+      x += 1;
+    } else {
+      if (draw) matrix.drawChar(x, y, text[i], color, color, 1);
+      x += 6;
+    }
+  }
+  return x;
+}
+
+// Draw tight text centered on the display
+void drawTightTextCentered(int y, const char *text, uint16_t color) {
+  int width = drawTightText(0, y, text, color, false) - 1;  // no gap after the last char
+  drawTightText((matrix.width() - width) / 2, y, text, color, true);
 }
 
 void logoSqueeze() {
@@ -1687,10 +1711,13 @@ void logoSqueeze() {
   matrix.clear();
   drawSlice(p, 0, DIM_CYAN, false);
 
-  // The chant, one word at a time, centered
-  int word = squeezeChantWord(t);
-  if (word == 1 || word == 2) drawSmallText(14, 4, "SLICE!", WHITE, 6, -1000);
-  if (word == 3) drawSmallText(8, 4, "SQUEEZE!", CYAN, 8, -1000);
+  // The chant, building up one word at a time
+  if (t >= CHANT_SLICE_2) {
+    drawTightTextCentered(0, "SLICE! SLICE!", WHITE);
+  } else if (t >= CHANT_SLICE_1) {
+    drawTightText(0, 0, "SLICE!", WHITE, true);  // where the first word ends up
+  }
+  if (t >= CHANT_SQUEEZE) drawTightTextCentered(LOGO_NUMBER_Y, "SQUEEZE!!", CYAN);
 
   // Juice drops, launched from along the flat edge when it's squeezed
   if (t >= 250) {
@@ -1711,12 +1738,14 @@ void logoSqueeze() {
 
   // Side: cyan on the squeeze, fading back to orange, then pulsing with the chant
   float fade = phase(t, 400, 1200);
-  if (word == 3) {
+  bool sliceFlash = (t >= CHANT_SLICE_1 && t < CHANT_SLICE_1 + 300) ||
+                    (t >= CHANT_SLICE_2 && t < CHANT_SLICE_2 + 300);
+  if (t >= CHANT_SQUEEZE) {
     sideColor(SIDE_CYAN_R, SIDE_CYAN_G, SIDE_CYAN_B);
-  } else if (t >= 1900 && word == 0) {
+  } else if (t >= CHANT_SLICE_1 && !sliceFlash) {
     // Dim between the words so each SLICE! is a beat
     sideColor(scale8(SIDE_ORANGE_R, 60), scale8(SIDE_ORANGE_G, 60), scale8(SIDE_ORANGE_B, 60));
-  } else if (t < 200) {
+  } else if (t < 200 || sliceFlash) {
     sideColor(SIDE_ORANGE_R, SIDE_ORANGE_G, SIDE_ORANGE_B);
   } else {
     sideColor(lerp(SIDE_CYAN_R, SIDE_ORANGE_R, fade),
