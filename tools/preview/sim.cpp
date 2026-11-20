@@ -17,13 +17,18 @@
 #include "Adafruit_NeoMatrix.h"
 
 unsigned long sim_micros = 0;
+unsigned long sim_clock_us = 0;
 SimSerial Serial;
 
 #define time sketch_time
+// On the Mega an `int` is 16 bits, on a PC it's 32. Make the sketch's ints
+// 16-bit so overflow bugs show up here the same way they do on the cart.
+#define int short
 // Function prototypes for the sketch (the Arduino IDE generates these
 // automatically; make_gifs.py writes them to build/prototypes.h)
 #include "build/prototypes.h"
 #include "../../SliceCartWithTimeManager/SliceCartWithTimeManager.ino"
+#undef int
 #undef time
 
 // Fake inputs: a beat at 120 BPM for the microphone, fixed pot positions

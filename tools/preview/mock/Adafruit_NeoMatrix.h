@@ -44,7 +44,8 @@ public:
   void begin() {}
   void show() {
     memcpy(shown, pixels, W * H * sizeof(uint16_t));
-    sim_advance_us(30UL * W * H + 300);
+    sim_advance_us(300);
+    sim_show_us(30UL * W * H);
   }
   void clear() { fillScreen(0); }
   void setBrightness(uint8_t) {}

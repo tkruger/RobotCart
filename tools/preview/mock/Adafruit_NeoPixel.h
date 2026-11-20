@@ -15,7 +15,8 @@ public:
   void begin() {}
   void show() {
     memcpy(shown, pixels, n * sizeof(uint32_t));
-    sim_advance_us(30UL * n + 300);  // WS2812: ~30us per pixel + latch
+    sim_advance_us(300);     // latch gap between updates (interrupts on)
+    sim_show_us(30UL * n);   // WS2812: 30us per pixel, interrupts off
   }
   void clear() { memset(pixels, 0, n * sizeof(uint32_t)); }
   void setBrightness(uint8_t) {}  // previews are shown at full brightness

@@ -46,7 +46,7 @@ MW, MH = 64, 16
 def write_prototypes():
     """Do what the Arduino IDE does: declare every top-level function up front."""
     protos = []
-    for m in re.finditer(r"^(?:void|int|bool|boolean|uint16_t|String)\s+\w+\s*\([^)]*\)\s*\{",
+    for m in re.finditer(r"^(?:void|int|bool|boolean|uint16_t|String|unsigned long)\s+\w+\s*\([^)]*\)\s*\{",
                          SKETCH.read_text(), re.M):
         sig = m.group(0).rstrip("{").strip()
         if not sig.startswith(("void setup", "void loop")):

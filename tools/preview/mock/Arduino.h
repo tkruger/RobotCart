@@ -42,12 +42,18 @@ typedef uint8_t byte;
 #define A2 56
 
 // ---- Simulation hooks (implemented in sim.cpp) ----
+// sim_micros is real (wall clock) time. sim_clock_us is what millis() sees.
+// They differ because, like a real AVR (Mega/Uno), interrupts are off while
+// LEDs are being sent, so millis() only gains ~1ms per show() no matter how
+// long the show() actually took.
 extern unsigned long sim_micros;
-inline void sim_advance_us(unsigned long us) { sim_micros += us; }
+extern unsigned long sim_clock_us;
+inline void sim_advance_us(unsigned long us) { sim_micros += us; sim_clock_us += us; }
+inline void sim_show_us(unsigned long us) { sim_micros += us; sim_clock_us += us < 1024 ? us : 1024; }
 int sim_analogRead(int pin);
 
-inline unsigned long millis() { return sim_micros / 1000; }
-inline unsigned long micros() { return sim_micros; }
+inline unsigned long millis() { return sim_clock_us / 1000; }
+inline unsigned long micros() { return sim_clock_us; }
 inline void delay(unsigned long ms) { sim_advance_us(ms * 1000); }
 inline int analogRead(int pin) { return sim_analogRead(pin); }
 inline int digitalRead(int) { return LOW; }  // buttons never pressed

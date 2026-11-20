@@ -68,6 +68,12 @@
 // Where is the mic connected?
 #define MIC_PIN A0
 
+// How many pixels scrolling text moves per frame. 1 is the smoothest. The
+// matrix + strip can only be updated ~24 times a second (every LED takes 30us
+// to send), so 1 pixel/frame scrolls at ~24 pixels (2 characters) a second.
+// 2 doubles the speed but looks jumpy.
+#define SCROLL_STEP 1
+
 // ---------------------------------------------------------------------------
 // ColorWheel
 // ---------------------------------------------------------------------------
@@ -361,28 +367,92 @@ int sequence = 0;
 int lastSequence = 0;
 
 //FastLoop Variables
-// millis() captured at the start of each loop()
-// NOTE: on 8-bit Arduinos `int` is 16 bits, so this wraps every ~32.7s. The
-// subtraction below still works across the wrap for short durations.
-int time = 0;
+// Real time in ms, captured at the start of each loop() by cartMillis().
+// All the timers are unsigned long like millis() itself: an `int` on the Mega
+// is only 16 bits and overflows after ~32 seconds, which used to freeze effects.
+unsigned long time = 0;
 
 // Variables to track the state of the side panel sequences.
-// Each side effect sets currentSideMethod to its own name the first time it runs,
-// which is how it knows to reset its start time and do any first-run setup.
-int sideSequenceStartTime = 0;
+// Each side effect calls startSide("itsName") every frame; that returns true
+// only on the first frame, which is where the effect does its setup.
+unsigned long sideSequenceStartTime = 0;
 String currentSideMethod = "";
 // Milliseconds since the current side effect (re)started
-int timeInSideSequence = 0;
+unsigned long timeInSideSequence = 0;
 // Set true by restartSide() when a side effect finishes one full cycle
 bool sideFinished = false;
 
 // Variables to track the state of the matrix, same pattern as the side panels
-int scrollSequenceStartTime = 0;
+unsigned long scrollSequenceStartTime = 0;
 String currentScrollMethod = "";
 // Milliseconds since the current matrix effect (re)started
-int timeInScrollSequence = 0;
+unsigned long timeInScrollSequence = 0;
 // Set true by restartScroll() when a matrix effect finishes one full cycle
 bool scrollFinished = false;
+
+// ---------------------------------------------------------------------------
+// Keeping time while sending to the LEDs
+//
+// On the Mega, interrupts are switched off while show() sends data to the
+// LEDs, so millis() stops counting. Each LED takes 30us, so every matrix
+// update (1024 LEDs, ~31ms) and strip update (300 LEDs, ~9ms) loses almost
+// all of that time - millis() was running about 10-20x slower than real time,
+// which is why some programs seemed stuck (e.g. a 0.5s blink taking 9s).
+//
+// Always call showStrip() / showMatrix() instead of strip.show() /
+// matrix.show(): they add the lost time back, and cartMillis() includes it.
+// ---------------------------------------------------------------------------
+#define MATRIX_LEDS (GRID_NUM_ROWS * GRID_NUM_COLS * GRID_TILES_X * GRID_TILES_Y)
+#define MICROS_PER_LED 30UL
+// Total time millis() has missed, in microseconds
+unsigned long lostMicros = 0;
+
+// millis() missed the whole show() except the ~1ms tick that was pending
+void addLostTime(unsigned long leds) {
+  unsigned long showMicros = leds * MICROS_PER_LED;
+  if (showMicros > 1024) lostMicros += showMicros - 1024;
+}
+
+void showStrip() {
+  strip.show();
+  addLostTime(NUM_LEDS);
+}
+
+void showMatrix() {
+  matrix.show();
+  addLostTime(MATRIX_LEDS);
+}
+
+// Real elapsed time in ms (millis() plus the time it missed during show())
+unsigned long cartMillis() {
+  return millis() + lostMicros / 1000;
+}
+
+/**
+ * Call at the top of a side effect with the effect's name. Returns true on
+ * the first frame after switching to it (do your setup then), and resets the
+ * side timer so timeInSideSequence starts from 0.
+ **/
+bool startSide(const char *name) {
+  if (currentSideMethod.equals(name)) return false;
+  currentSideMethod = name;
+  sideSequenceStartTime = time;
+  timeInSideSequence = 0;
+  sideFinished = false;
+  return true;
+}
+
+/**
+ * Same as startSide() but for matrix effects.
+ **/
+bool startScroll(const char *name) {
+  if (currentScrollMethod.equals(name)) return false;
+  currentScrollMethod = name;
+  scrollSequenceStartTime = time;
+  timeInScrollSequence = 0;
+  scrollFinished = false;
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Setup and main loop
@@ -396,10 +466,10 @@ void setup() {
   Serial.begin(500000);
   pinMode(LED_BUILTIN, OUTPUT);
   strip.begin();
-  strip.show();
+  showStrip();
 
   matrix.begin();
-  matrix.show();
+  showMatrix();
   matrix.setTextWrap(false);
   matrix.setBrightness(100);
   matrix.setTextColor(ORANGE);
@@ -418,18 +488,10 @@ void loop() {
   //Choose HTML color codes to use here: https://g.co/kgs/S9Anr7
   //Run the method of your choice below
   micVolume = analogRead(MIC_PIN);
-  time = millis();
+  time = cartMillis();
+  // Unsigned subtraction stays correct even when millis() wraps (every ~50 days)
   timeInSideSequence = time - sideSequenceStartTime;
   timeInScrollSequence = time - scrollSequenceStartTime;
-
-  // Don't let it overflow
-  if (timeInSideSequence > 32000){
-    timeInSideSequence = 0;
-  }
-  if (timeInScrollSequence > 32000){
-    timeInScrollSequence = 0;
-  }
-
 
   // Top button = next program, bottom button = previous program (wraps around)
   if (digitalRead(TOP_BUTTON_PIN) == 1) {
@@ -437,6 +499,7 @@ void loop() {
     while (digitalRead(TOP_BUTTON_PIN) == 1) {
       delay(1);
     }  // Wait for button to be released to prevent skipping
+    delay(30);  // Ignore contact bounce on release so one press = one step
     if (sequence < 0)
       sequence = LED_PROGRAMS - 1;
     else if (sequence >= LED_PROGRAMS)
@@ -449,6 +512,7 @@ void loop() {
     while (digitalRead(BOTTOM_BUTTON_PIN) == 1) {
       delay(1);
     }  // Wait for button to be released to prevent skipping
+    delay(30);  // Ignore contact bounce on release so one press = one step
     if (sequence < 0)
       sequence = LED_PROGRAMS - 1;
     else if (sequence >= LED_PROGRAMS)
@@ -474,19 +538,19 @@ void loop() {
     case 0:
       resetRainbowScroll();
       strip.clear();
-      strip.show();
+      showStrip();
       matrix.clear();
-      matrix.show();
+      showMatrix();
       break;
     // 1: Fading rainbow sides + scrolling chant that changes color as a whole
     case 1:
       rainbow(15);
-      rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 2, 15, 2, false);
+      rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 15, SCROLL_STEP, false);
       break;
     // 2: Fading rainbow sides + scrolling chant with each letter a different color
     case 2:
       rainbow(15);
-      rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 2, 85, 2, true);
+      rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 85, SCROLL_STEP, true);
       break;
     // 3: Sound-reactive VU meter on the sides + red "SLICE" / "8738" flashing
     case 3:
@@ -505,7 +569,7 @@ void loop() {
     // 6: Letter-by-letter then blink the whole word + scrolling orange chant
     case 6:
       cycleAndBlink();
-      coloredScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 2, 2, ORANGE);
+      coloredScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, SCROLL_STEP, ORANGE);
       break;
     // 7: One continuous rainbow wrapping side -> matrix -> side, text in shadow
     case 7:
@@ -524,8 +588,8 @@ void loop() {
     default:
       matrix.clear();
       strip.clear();
-      matrix.show();
-      strip.show();
+      showMatrix();
+      showStrip();
       break;
   }
 }
@@ -544,10 +608,7 @@ void loop() {
  **/
 void blink(int red, int green, int blue) {
   // Initialize function at 0 ticks
-  if (!currentSideMethod.equals("blink")) {
-    currentSideMethod = "blink";
-    sideSequenceStartTime = time;
-    sideFinished = false;
+  if (startSide("blink")) {
   }
 
   // Show color for 500 ticks
@@ -570,10 +631,7 @@ void blink(int red, int green, int blue) {
  * so it doesn't slow down the loop.
  **/
 void solidColor(int red, int green, int blue) {
-  if (!currentSideMethod.equals("solidColor")) {
-    currentSideMethod = "solidColor";
-    sideSequenceStartTime = time;
-    sideFinished = false;
+  if (startSide("solidColor")) {
     setAll(red, green, blue);
   }
 }
@@ -584,10 +642,7 @@ void solidColor(int red, int green, int blue) {
  * colorSpeed is the colorwheel jump per frame (bigger = faster).
  **/
 void rainbow(int colorSpeed) {
-  if (!currentSideMethod.equals("rainbow")) {
-    currentSideMethod = "rainbow";
-    sideSequenceStartTime = time;
-    sideFinished = false;
+  if (startSide("rainbow")) {
     clearMatrix();
   }
 
@@ -607,10 +662,7 @@ void rainbow(int colorSpeed) {
  * @param min    raw pot reading (0-1023) - noise floor subtracted from the mic
  **/
 void noise(int volume, int max, int min) {
-  if (!currentSideMethod.equals("noise")) {
-    currentSideMethod = "noise";
-    sideSequenceStartTime = time;
-    sideFinished = false;
+  if (startSide("noise")) {
     clearMatrix();
   }
 
@@ -658,10 +710,7 @@ bool goingBrighter = true;
  * The matrix shows inverted (black on white) "SLICE" then "8738", ~1 second each.
  **/
 void headLights() {
-  if (!currentSideMethod.equals("headLights")) {
-    currentSideMethod = "headLights";
-    sideSequenceStartTime = time;
-    sideFinished = false;
+  if (startSide("headLights")) {
     goingBrighter = true;
     strip.clear();
     clearMatrix();
@@ -692,8 +741,11 @@ void headLights() {
   }
 }
 
-// verticalRainbow(): how many frames have been drawn, used to advance the rainbow
-int cycleCount = 0;
+// verticalRainbow(): the color at the start of the rainbow. It moves forward a
+// little every frame, so the rainbow flows across the cart.
+// (This used to replay the wheel from red every frame using a frame counter,
+// which got slower every frame and overflowed after ~20s, freezing program 7.)
+ColorWheel verticalRainbowStart = ColorWheel();
 
 /**
  * This will create a wrapping rainbow from one side of the cart, going over the matrix display
@@ -704,21 +756,18 @@ int cycleCount = 0;
  * so the rainbow appears to move.
  **/
 void verticalRainbow() {
-  if (!currentSideMethod.equals("verticalRainbow")) {
-    currentSideMethod = "verticalRainbow";
-    sideSequenceStartTime = time;
-    sideFinished = false;
-    cycleCount = 0;
+  if (startSide("verticalRainbow")) {
     strip.clear();
     clearMatrix();
-    matrixColorWheel.resetRainbow();
+    verticalRainbowStart.resetRainbow();
+    verticalRainbowStart.resetRainbow(15);
   } else {
     int rainbowStep = 15;
-    cycleCount++;
 
-    matrixColorWheel.resetRainbow();
-    // Jump forwarward to where the rainbow stopped plus one
-    matrixColorWheel.resetRainbow((cycleCount * (6 + matrix.width())) + rainbowStep);
+    // Move the start color along one step per column drawn (6 side + 64 matrix),
+    // then draw the whole rainbow from there
+    verticalRainbowStart.resetRainbow(6 + matrix.width());
+    matrixColorWheel = verticalRainbowStart;
 
     // Right side panel columns
     for (int l = 1; l <= 3; l++){
@@ -747,8 +796,8 @@ void verticalRainbow() {
       showText("SLICE", BLACK, false, false);
     }
 
-    matrix.show();
-    strip.show();
+    showMatrix();
+    showStrip();
   }
 
 }
@@ -760,10 +809,7 @@ void verticalRainbow() {
  * colored "SLICE", then inverted "SLICE", then a scrolling "SQUEEZE!".
  **/
 void cycleAllLetters(int red, int green, int blue, int speed, boolean includeMatrix) {
-  if (!currentSideMethod.equals("cycleAllLetters")) {
-    currentSideMethod = "cycleAllLetters";
-    sideSequenceStartTime = time;
-    sideFinished = false;
+  if (startSide("cycleAllLetters")) {
     clearMatrix();
   }
 
@@ -951,7 +997,7 @@ void updateLeds() {
   }
 
   strip.setBrightness(100);
-  strip.show();
+  showStrip();
 }
 
 /**
@@ -995,10 +1041,7 @@ void alternatePhrases(String text, String altText, uint16_t color, int displayTi
  * has the option to be inverted where the color is used as the background and the text is in shadow/black
  **/
 void alternatePhrases(String text, String altText, uint16_t color, int displayTime, int pauseBuffer, bool inverted){
-  if (!currentScrollMethod.equals("alternatePhrases")) {
-    currentScrollMethod = "alternatePhrases";
-    scrollSequenceStartTime = time;
-    scrollFinished = false;
+  if (startScroll("alternatePhrases")) {
   }
 
   // In order to try to stay sane, we declare the times that we need to pay attention to
@@ -1062,7 +1105,7 @@ void showText(String text, uint16_t color, bool clear, bool inverted){
   int padding = (int)(((GRID_NUM_COLS * GRID_TILES_X) - ((int)text.length() * CHAR_PIX_WIDTH * 2))/2) + 1;
   matrix.setCursor(padding, 1);
   matrix.print(text);
-  matrix.show();
+  showMatrix();
 
 }
 
@@ -1094,7 +1137,7 @@ void drawLogo(int litSegment) {
       if (color != BLACK) matrix.drawPixel(x, y, color);
     }
   }
-  matrix.show();
+  showMatrix();
 }
 
 // How long each step of the logo animation lasts, in ms
@@ -1108,10 +1151,7 @@ int lastLogoStep = -1;
  * then repeats. With animate = false it just shows the plain logo.
  **/
 void showLogo(bool animate) {
-  if (!currentScrollMethod.equals("showLogo")) {
-    currentScrollMethod = "showLogo";
-    scrollSequenceStartTime = time;
-    scrollFinished = false;
+  if (startScroll("showLogo")) {
     lastLogoStep = -1;  // force a redraw
   }
 
@@ -1137,7 +1177,7 @@ void showLogo(bool animate) {
  **/
 void clearMatrix(){
   matrix.clear();
-  matrix.show();
+  showMatrix();
 }
 
 /**
@@ -1145,10 +1185,7 @@ void clearMatrix(){
  * and the move Delta determines how fast to go by moving that many LEDs per run
  **/
 void coloredScrollingText(String scrollText, int pauseTime, int moveDelta, uint16_t color){
-  if (!currentScrollMethod.equals("coloredScrollingText")) {
-    currentScrollMethod = "coloredScrollingText";
-    scrollSequenceStartTime = time;
-    scrollFinished = false;
+  if (startScroll("coloredScrollingText")) {
     clearMatrix();
     resetRainbowScroll();
   }
@@ -1164,10 +1201,7 @@ void coloredScrollingText(String scrollText, int pauseTime, int moveDelta, uint1
  * and the move Delta determines how fast to go by moving that many LEDs per run
  **/
 void rainbowScrollingText(String scrollText, int pauseTime, int colorSpeed, int moveDelta, bool rainbowText){
-  if (!currentScrollMethod.equals("rainbowScrollingText")) {
-    currentScrollMethod = "rainbowScrollingText";
-    scrollSequenceStartTime = time;
-    scrollFinished = false;
+  if (startScroll("rainbowScrollingText")) {
     clearMatrix();
     resetRainbowScroll();
   }  
@@ -1205,7 +1239,6 @@ void scrollingText(String scrollText, int pauseTime, int moveDelta, bool rainbow
       matrixColorWheel.rollingRainbow(colorSpeed);
       matrix.setTextColor(matrix.Color(matrixColorWheel.red, matrixColorWheel.green, matrixColorWheel.blue));
       matrix.print(scrollText.charAt(i));
-      Serial.print(scrollText.charAt(i));
     }
   } else {
     matrix.print(scrollText);
@@ -1217,6 +1250,6 @@ void scrollingText(String scrollText, int pauseTime, int moveDelta, bool rainbow
   if (matrixOffset < -length) {
     restartScroll();
   }
-  matrix.show();
+  showMatrix();
   delay(pauseTime);
 }

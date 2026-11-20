@@ -164,7 +164,7 @@ Side effects do the same with `currentSideMethod`, `timeInSideSequence` and `res
 
 ## Regenerating the previews
 
-[`tools/preview/`](tools/preview) compiles the sketch for Windows against stand-in versions of the Arduino, NeoPixel and NeoMatrix libraries (in `mock/`) and the real Adafruit GFX library. It runs each program on a simulated clock and records what the LEDs show. Needs Visual Studio with the C++ workload, the Arduino libraries above, and Python with Pillow.
+[`tools/preview/`](tools/preview) compiles the sketch for Windows against stand-in versions of the Arduino, NeoPixel and NeoMatrix libraries (in `mock/`) and the real Adafruit GFX library. It runs each program on a simulated clock and records what the LEDs show. It behaves like a Mega: `int` is 16 bits, and `millis()` stops counting while LEDs are being updated. Needs Visual Studio with the C++ workload, the Arduino libraries above, and Python with Pillow.
 
 ```sh
 pip install pillow
@@ -174,9 +174,13 @@ python tools/preview/make_gifs.py 9      # just program 9
 
 When you add a program, add it to `PROGRAMS` at the top of `make_gifs.py`.
 
+## Timing on the Mega
+
+- **Use `showStrip()` / `showMatrix()`, never `strip.show()` / `matrix.show()`.** While the Mega sends data to the LEDs, interrupts are switched off and `millis()` stops counting. Sending all 1,324 LEDs takes about 40 ms, but `millis()` only sees about 2 ms of it, so time-based effects used to run 10–20× slower than written. The wrappers add the missing time back, and the sketch reads time from `cartMillis()`.
+- **Keep times in `unsigned long`.** An `int` on the Mega is 16 bits and overflows after about 32 seconds.
+- **The display maxes out at about 24 frames a second.** Every LED takes 30 µs to send. Scrolling text moves 1 pixel per frame (`SCROLL_STEP`) because that's the smoothest it can go; 2 is twice as fast but jumpy.
+
 ## Known quirks
 
-- `time` and the sequence timers are `int`. On 8-bit boards that's 16 bits, so they wrap every ~32 seconds. Subtracting start from now still works for short effects, but `unsigned long` would be safer.
 - In `noise()`, the gain calculation uses integer division, so turning the max pot only changes the gain in whole steps.
-- `scrollingText()` prints every character to Serial in rainbow mode, which slows down the frame rate.
 - `updateLEDs()` (sets a range) and `updateLeds()` (shows the strip) have confusingly similar names.
