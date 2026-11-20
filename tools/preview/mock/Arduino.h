@@ -25,6 +25,7 @@
 #define PI 3.14159265358979323846
 #endif
 #define radians(deg) ((deg) * PI / 180.0)
+#define degrees(rad) ((rad) * 180.0 / PI)
 #ifdef _MSC_VER
 #define __builtin_bswap16 _byteswap_ushort
 #endif

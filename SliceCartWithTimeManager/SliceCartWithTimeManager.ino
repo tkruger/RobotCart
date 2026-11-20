@@ -63,7 +63,7 @@
 
 // How many LED programs do we have to loop through (cases 0..LED_PROGRAMS-1 in loop()).
 // Remember to bump this when adding a new case.
-#define LED_PROGRAMS 10
+#define LED_PROGRAMS 15
 
 // Where is the mic connected?
 #define MIC_PIN A0
@@ -203,6 +203,18 @@ class ColorWheel {
     bool red_done = false;
     bool green_done = false;
     bool blue_done = false;
+};
+
+// Position, size and rotation of the orange slice for the animated logo
+// programs (see drawSlice). Defined up here so the Arduino IDE's automatic
+// function prototypes can use it.
+struct SlicePose {
+  float cx, cy;   // where the middle of the flat edge goes on the matrix
+  float r;        // radius in pixels
+  float angle;    // degrees clockwise. 0 = flat edge on top, rind below.
+                  // 45 = tilted like the real logo. 180 = upside down (a dome).
+  float sx, sy;   // stretch along / across the flat edge (1 = normal,
+                  // sx = -1 mirrors it left to right)
 };
 
 // ---------------------------------------------------------------------------
@@ -390,6 +402,10 @@ unsigned long timeInScrollSequence = 0;
 // Set true by restartScroll() when a matrix effect finishes one full cycle
 bool scrollFinished = false;
 
+// What the side letters were last set to, so we only send to the strip
+// (which takes ~9ms) when something actually changed
+uint32_t lastSideState = 0xFFFFFFFF;
+
 // ---------------------------------------------------------------------------
 // Keeping time while sending to the LEDs
 //
@@ -529,6 +545,7 @@ void loop() {
     lastSequence = sequence;
     currentSideMethod = "";
     currentScrollMethod = "";
+    lastSideState = 0xFFFFFFFF;  // make the logo programs redraw the sides
   }
 
   // The LED programs. Most pair one side-panel effect with one matrix effect.
@@ -542,48 +559,70 @@ void loop() {
       matrix.clear();
       showMatrix();
       break;
-    // 1: Fading rainbow sides + scrolling chant that changes color as a whole
+    // ----- Team logo programs -----
+    // 1: Team logo, each slice segment + digit of 8738 lighting up in turn
+    //    while the side letters turn cyan one at a time
     case 1:
+      animatedLogo();
+      break;
+    // 2: Slice pops up, fills in, then slides into place as the text types in
+    case 2:
+      logoZoom();
+      break;
+    // 3: Slice spins like a wheel and lands at a 45 degree tilt
+    case 3:
+      logoSpin();
+      break;
+    // 4: Slice rolls across uncovering "SLICE 8738", then rolls back
+    case 4:
+      logoRoll();
+      break;
+    // 5: Slice gets squeezed and sprays juice, then "SLICE! SQUEEZE!"
+    case 5:
+      logoSqueeze();
+      break;
+    // 6: Slice rises like a sun, then the digits fly out into place
+    case 6:
+      logoSunrise();
+      break;
+
+    // ----- Original programs -----
+    // 7: Fading rainbow sides + scrolling chant that changes color as a whole
+    case 7:
       rainbow(15);
       rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 15, SCROLL_STEP, false);
       break;
-    // 2: Fading rainbow sides + scrolling chant with each letter a different color
-    case 2:
+    // 8: Fading rainbow sides + scrolling chant with each letter a different color
+    case 8:
       rainbow(15);
       rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 85, SCROLL_STEP, true);
       break;
-    // 3: Sound-reactive VU meter on the sides + red "SLICE" / "8738" flashing
-    case 3:
+    // 9: Sound-reactive VU meter on the sides + red "SLICE" / "8738" flashing
+    case 9:
       noise(micVolume, analogRead(MAX_PIN), analogRead(MIN_PIN));
       alternatePhrases("SLICE", "8738", rainbowColors[0], 800, 300);
       break;
-    // 4: Orange blinking sides + inverted (black on orange) "SLICE" / "8738"
-    case 4:
+    // 10: Orange blinking sides + inverted (black on orange) "SLICE" / "8738"
+    case 10:
       blink(255, 50, 0);
       alternatePhrases("SLICE", "8738", ORANGE, 3000, 0, true);
       break;
-    // 5: Light up S, L, I, C, E one at a time, with matching matrix text
-    case 5:
+    // 11: Light up S, L, I, C, E one at a time, with matching matrix text
+    case 11:
       cycleAllLetters(255, 50, 0, 2, true);
       break;
-    // 6: Letter-by-letter then blink the whole word + scrolling orange chant
-    case 6:
+    // 12: Letter-by-letter then blink the whole word + scrolling orange chant
+    case 12:
       cycleAndBlink();
       coloredScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, SCROLL_STEP, ORANGE);
       break;
-    // 7: One continuous rainbow wrapping side -> matrix -> side, text in shadow
-    case 7:
+    // 13: One continuous rainbow wrapping side -> matrix -> side, text in shadow
+    case 13:
       verticalRainbow();
       break;
-    // 8: White "headlights" fading in and out with inverted text
-    case 8:
+    // 14: White "headlights" fading in and out with inverted text
+    case 14:
       headLights();
-      break;
-    // 9: Solid orange sides + team logo, lighting up each slice segment and
-    //    its matching digit of 8738 in turn
-    case 9:
-      solidColor(255, 50, 0);
-      showLogo(true);
       break;
     default:
       matrix.clear();
@@ -598,7 +637,7 @@ void loop() {
 // Side panel effects
 //
 // Pattern every effect follows:
-//   if (!currentSideMethod.equals("myEffect")) { ...first-run setup... }
+//   if (startSide("myEffect")) { ...first-run setup... }
 //   look at timeInSideSequence to decide what to draw this frame
 //   call restartSide() when one full cycle is done
 // ---------------------------------------------------------------------------
@@ -897,6 +936,15 @@ void cycleAndBlink() {
  * letter: 1 = S, 2 = L, 3 = I, 4 = C, 5 = E (each is a range of rows)
  **/
 void setLetter(int letter, int red, int green, int blue) {
+  fillLetter(letter, red, green, blue);
+  updateLeds();
+}
+
+/**
+ * Same as setLetter() but doesn't send to the strip, so you can color several
+ * letters and then call updateLeds() once.
+ **/
+void fillLetter(int letter, int red, int green, int blue) {
   if (letter == 1) {
     for (int i = 34; i < 43; i++) {
       setRow(i, red, green, blue);
@@ -918,8 +966,6 @@ void setLetter(int letter, int red, int green, int blue) {
       setRow(i, red, green, blue);
     }
   }
-
-  updateLeds();
 }
 
 /**
@@ -1111,9 +1157,10 @@ void showText(String text, uint16_t color, bool clear, bool inverted){
 
 /**
  * Draw the team logo from the LOGO table.
- * @param litSegment which slice segment / digit (0-3) to highlight, or -1 for none
+ * @param litMask which slice segments / digits to highlight: bit 0 = the
+ *                leftmost segment and the first "8", up to bit 3. 0 = none.
  **/
-void drawLogo(int litSegment) {
+void drawLogo(uint8_t litMask) {
   matrix.clear();
   for (int y = 0; y < LOGO_HEIGHT; y++) {
     for (int x = 0; x < LOGO_WIDTH; x++) {
@@ -1127,11 +1174,11 @@ void drawLogo(int litSegment) {
       } else if (code == 2) {
         color = WHITE;
       } else if (code >= 4 && code <= 7) {
-        // Inside of a slice segment: only filled when it's the lit one
-        if (code - 4 == litSegment) color = DIM_CYAN;
+        // Inside of a slice segment: only filled when it's lit
+        if (litMask & (1 << (code - 4))) color = DIM_CYAN;
       } else if (code >= 8 && code <= 11) {
         // A digit of 8738: white when highlighted, cyan otherwise
-        color = (code - 8 == litSegment) ? WHITE : CYAN;
+        color = (litMask & (1 << (code - 8))) ? WHITE : CYAN;
       }
 
       if (color != BLACK) matrix.drawPixel(x, y, color);
@@ -1140,36 +1187,557 @@ void drawLogo(int litSegment) {
   showMatrix();
 }
 
+// ---------------------------------------------------------------------------
+// Side letters for the logo programs
+// ---------------------------------------------------------------------------
+
+// Letters as a bitmask: bit 0 = S, 1 = L, 2 = I, 3 = C, 4 = E
+#define ALL_LETTERS 0x1F
+// Side strip colors (raw strip RGB, not matrix colors)
+#define SIDE_ORANGE_R 255
+#define SIDE_ORANGE_G 50
+#define SIDE_ORANGE_B 0
+#define SIDE_CYAN_R 0
+#define SIDE_CYAN_G 160
+#define SIDE_CYAN_B 255
+
+// (lastSideState is declared with the other shared state near the top)
+
+// Scale a 0-255 color channel by a 0-255 brightness
+uint8_t scale8(uint8_t c, uint8_t level) {
+  return ((uint16_t)c * level) / 255;
+}
+
+/**
+ * Color the side letters: letters in cyanMask are cyan, the other letters in
+ * litMask are orange, the rest are off. level is the brightness (0-255).
+ **/
+void sideLetters(uint8_t cyanMask, uint8_t litMask, uint8_t level) {
+  uint32_t state = ((uint32_t)level << 16) | ((uint32_t)cyanMask << 8) | litMask;
+  if (state == lastSideState) return;
+  lastSideState = state;
+
+  strip.clear();
+  for (int l = 0; l < 5; l++) {
+    if (cyanMask & (1 << l)) {
+      fillLetter(l + 1, scale8(SIDE_CYAN_R, level), scale8(SIDE_CYAN_G, level), scale8(SIDE_CYAN_B, level));
+    } else if (litMask & (1 << l)) {
+      fillLetter(l + 1, scale8(SIDE_ORANGE_R, level), scale8(SIDE_ORANGE_G, level), scale8(SIDE_ORANGE_B, level));
+    }
+  }
+  updateLeds();
+}
+
+/**
+ * All side letters one color, only sending to the strip when it changes.
+ **/
+void sideColor(uint8_t red, uint8_t green, uint8_t blue) {
+  uint32_t state = 0x01000000UL | ((uint32_t)red << 16) | ((uint32_t)green << 8) | blue;
+  if (state == lastSideState) return;
+  lastSideState = state;
+  setAll(red, green, blue);
+}
+
+/**
+ * Light the side letters from the bottom up like a rising sun: the bottom
+ * `rows` rows (0-43) in orange, the rest off.
+ **/
+void sideRows(int rows) {
+  uint32_t state = 0x02000000UL | rows;
+  if (state == lastSideState) return;
+  lastSideState = state;
+  strip.clear();
+  for (int i = 0; i < rows; i++) setRow(i, SIDE_ORANGE_R, SIDE_ORANGE_G, SIDE_ORANGE_B);
+  updateLeds();
+}
+
+// A mask of the first n letters (n = 0-5), e.g. 2 -> S and L
+uint8_t firstLetters(int n) {
+  if (n <= 0) return 0;
+  if (n >= 5) return ALL_LETTERS;
+  return (1 << n) - 1;
+}
+
+// ---------------------------------------------------------------------------
+// Program: animated logo
+// ---------------------------------------------------------------------------
+
 // How long each step of the logo animation lasts, in ms
 #define LOGO_STEP_MS 600
 // The last logo frame drawn, so we only redraw when it changes
 int lastLogoStep = -1;
 
 /**
- * Show the team logo. With animate = true it steps through:
- *   plain logo -> segment 0 + "8" -> segment 1 + "7" -> segment 2 + "3" -> segment 3 + "8"
- * then repeats. With animate = false it just shows the plain logo.
+ * The team logo with the side letters turning cyan one at a time:
+ *   step 0: plain logo, all letters orange
+ *   steps 1-4: segment N + its digit of 8738 light up, letters S, L, I, C turn cyan
+ *   step 5: the whole slice and 8738 light up and E turns cyan
+ * then it starts over.
  **/
-void showLogo(bool animate) {
-  if (startScroll("showLogo")) {
+void animatedLogo() {
+  startSide("animatedLogo");
+  if (startScroll("animatedLogo")) {
     lastLogoStep = -1;  // force a redraw
   }
 
-  int step = 0;
-  if (animate) {
-    if (timeInScrollSequence >= LOGO_STEP_MS * 5) {
-      restartScroll();
-    } else {
-      step = timeInScrollSequence / LOGO_STEP_MS;
-    }
-  }
+  int step = (timeInScrollSequence / LOGO_STEP_MS) % 6;
 
   // Drawing 1024 pixels takes a while, so skip it if nothing changed
   if (step == lastLogoStep) return;
   lastLogoStep = step;
 
-  // step 0 = nothing lit, steps 1-4 = segments 0-3
-  drawLogo(step - 1);
+  uint8_t litMask = 0;
+  if (step >= 1 && step <= 4) litMask = 1 << (step - 1);
+  if (step == 5) litMask = 0x0F;
+  drawLogo(litMask);
+  sideLetters(firstLetters(step), ALL_LETTERS, 255);
+}
+
+// ---------------------------------------------------------------------------
+// Orange slice drawn from shapes
+//
+// The LOGO bitmap above can only be drawn in one place at one size. For the
+// animated logo programs the slice is drawn from triangles and lines instead,
+// so it can be moved, zoomed, spun and squashed.
+//
+// The slice is described in its own coordinates: u runs along the flat edge
+// (-r on the left to +r on the right) and v goes from the flat edge (0) out to
+// the rind (r). Segment 0 is the leftmost wedge, segment 3 the rightmost,
+// matching the digits 8 7 3 8.
+// ---------------------------------------------------------------------------
+
+// The rind is drawn as this many straight lines (4 per segment)
+#define SLICE_ARC_STEPS 16
+
+// (struct SlicePose is defined near the top of the file)
+
+// cos/sin of the points around the rind, worked out once
+float sliceArcCos[SLICE_ARC_STEPS + 1];
+float sliceArcSin[SLICE_ARC_STEPS + 1];
+bool sliceTablesReady = false;
+
+void initSliceTables() {
+  if (sliceTablesReady) return;
+  for (int i = 0; i <= SLICE_ARC_STEPS; i++) {
+    // From the left end of the flat edge (180 degrees) round to the right end (0)
+    float a = radians(180.0 - i * (180.0 / SLICE_ARC_STEPS));
+    sliceArcCos[i] = cos(a);
+    sliceArcSin[i] = sin(a);
+  }
+  sliceTablesReady = true;
+}
+
+// Convert a point in slice coordinates (u, v) to a matrix pixel
+void sliceToScreen(const SlicePose &p, float u, float v, int16_t &x, int16_t &y) {
+  float a = radians(p.angle);
+  float ca = cos(a), sa = sin(a);
+  u *= p.sx;
+  v *= p.sy;
+  x = (int16_t)floor(p.cx + u * ca - v * sa + 0.5);
+  y = (int16_t)floor(p.cy + u * sa + v * ca + 0.5);
+}
+
+// Where to draw the tiny digit for segment k (its top-left corner)
+void sliceDigitPos(const SlicePose &p, int k, int16_t &x, int16_t &y) {
+  int mid = k * 4 + 2;  // the rind point in the middle of the segment
+  sliceToScreen(p, 0.62 * p.r * sliceArcCos[mid], 0.62 * p.r * sliceArcSin[mid], x, y);
+  x -= 1;  // tiny digits are 3x5, so shift by half
+  y -= 2;
+}
+
+/**
+ * Draw a 3x5 pixel digit (8, 7 or 3). The normal 5x7 font is too big to fit
+ * between the dividers of the slice.
+ **/
+void drawTinyDigit(int x, int y, char c, uint16_t color) {
+  // 5 rows of 3 pixels, top row in the highest bits
+  uint16_t bits = 0b111101111101111;            // 8
+  if (c == '7') bits = 0b111001010010010;
+  if (c == '3') bits = 0b111001011001111;
+  for (int row = 0; row < 5; row++) {
+    for (int col = 0; col < 3; col++) {
+      if (bits & (1 << (14 - row * 3 - col))) matrix.drawPixel(x + col, y + row, color);
+    }
+  }
+}
+
+/**
+ * Draw the orange slice.
+ * @param litMask    segments to fill with fillColor (bit 0 = leftmost); the
+ *                   rest are filled black so the slice covers what's behind it
+ * @param showDigits draw 8 7 3 8 inside the segments (only when it's big enough)
+ **/
+void drawSlice(const SlicePose &p, uint8_t litMask, uint16_t fillColor, bool showDigits) {
+  initSliceTables();
+  if (p.r < 0.5) return;
+
+  int16_t cx, cy;
+  sliceToScreen(p, 0, 0, cx, cy);
+
+  // Points around the rind
+  int16_t ax[SLICE_ARC_STEPS + 1], ay[SLICE_ARC_STEPS + 1];
+  for (int i = 0; i <= SLICE_ARC_STEPS; i++) {
+    sliceToScreen(p, p.r * sliceArcCos[i], p.r * sliceArcSin[i], ax[i], ay[i]);
+  }
+
+  // Fill each segment as a fan of triangles from the center
+  for (int k = 0; k < 4; k++) {
+    uint16_t color = (litMask & (1 << k)) ? fillColor : BLACK;
+    for (int j = k * 4; j < k * 4 + 4; j++) {
+      matrix.fillTriangle(cx, cy, ax[j], ay[j], ax[j + 1], ay[j + 1], color);
+    }
+  }
+
+  // Rind, plus a second line inside it when it's big enough to look thin
+  for (int j = 0; j < SLICE_ARC_STEPS; j++) {
+    matrix.drawLine(ax[j], ay[j], ax[j + 1], ay[j + 1], ORANGE);
+  }
+  if (p.r >= 9) {
+    int16_t px, py, qx, qy;
+    for (int j = 0; j < SLICE_ARC_STEPS; j++) {
+      sliceToScreen(p, (p.r - 1) * sliceArcCos[j], (p.r - 1) * sliceArcSin[j], px, py);
+      sliceToScreen(p, (p.r - 1) * sliceArcCos[j + 1], (p.r - 1) * sliceArcSin[j + 1], qx, qy);
+      matrix.drawLine(px, py, qx, qy, ORANGE);
+    }
+  }
+
+  // Flat edge
+  matrix.drawLine(ax[0], ay[0], ax[SLICE_ARC_STEPS], ay[SLICE_ARC_STEPS], ORANGE);
+
+  // Dividers between the segments
+  for (int j = 4; j < SLICE_ARC_STEPS; j += 4) {
+    matrix.drawLine(cx, cy, ax[j], ay[j], ORANGE);
+  }
+
+  // Half-circle hub in the middle of the flat edge
+  float hub = p.r / 6;
+  if (hub < 1) hub = 1;
+  int16_t hx0, hy0, hx1, hy1;
+  for (int j = 0; j < SLICE_ARC_STEPS; j += 4) {
+    sliceToScreen(p, hub * sliceArcCos[j], hub * sliceArcSin[j], hx0, hy0);
+    sliceToScreen(p, hub * sliceArcCos[j + 4], hub * sliceArcSin[j + 4], hx1, hy1);
+    matrix.fillTriangle(cx, cy, hx0, hy0, hx1, hy1, ORANGE);
+  }
+
+  // Digits inside the segments, drawn last so the lines don't cut through them
+  if (showDigits && p.r >= 12) {
+    for (int k = 0; k < 4; k++) {
+      int16_t dx, dy;
+      sliceDigitPos(p, k, dx, dy);
+      drawTinyDigit(dx, dy, "8738"[k], (litMask & (1 << k)) ? WHITE : CYAN);
+    }
+  }
+}
+
+// A slice pose with the usual defaults (upright, normal size)
+SlicePose slicePose(float cx, float cy, float r, float angle) {
+  SlicePose p;
+  p.cx = cx;
+  p.cy = cy;
+  p.r = r;
+  p.angle = angle;
+  p.sx = 1;
+  p.sy = 1;
+  return p;
+}
+
+// ---------------------------------------------------------------------------
+// Animation helpers
+// ---------------------------------------------------------------------------
+
+float clamp01(float t) { return t < 0 ? 0 : (t > 1 ? 1 : t); }
+float lerp(float a, float b, float t) { return a + (b - a) * t; }
+
+// How far time t is through the window [start, end], from 0 to 1
+float phase(unsigned long t, unsigned long start, unsigned long end) {
+  if (t <= start) return 0;
+  if (t >= end) return 1;
+  return (float)(t - start) / (float)(end - start);
+}
+
+// Easing curves: take 0-1 and return 0-1, but not in a straight line
+float easeInCubic(float t) { t = clamp01(t); return t * t * t; }
+float easeOutCubic(float t) { t = 1 - clamp01(t); return 1 - t * t * t; }
+float easeInOutCubic(float t) {
+  t = clamp01(t);
+  if (t < 0.5) return 4 * t * t * t;
+  float f = -2 * t + 2;
+  return 1 - f * f * f / 2;
+}
+// Overshoots past 1 and settles back, like it popped into place
+float easeOutBack(float t) {
+  t = clamp01(t) - 1;
+  return 1 + 2.70158 * t * t * t + 1.70158 * t * t;
+}
+
+/**
+ * Shared start for the logo animations: claims both the side and matrix, and
+ * returns how far (ms) we are into the animation, looping every cycleMs.
+ **/
+unsigned long logoAnimTime(const char *name, unsigned long cycleMs) {
+  startSide(name);
+  startScroll(name);
+  return timeInScrollSequence % cycleMs;
+}
+
+/**
+ * Draw the first `count` characters of text in the small (5x7) font.
+ * @param fromX only draw characters that start at or right of this x
+ *              (pass -1000 to draw them all)
+ **/
+void drawSmallText(int x, int y, const char *text, uint16_t color, int count, int fromX) {
+  for (int i = 0; text[i] && i < count; i++) {
+    int cx = x + i * 6;
+    if (cx >= fromX) matrix.drawChar(cx, y, text[i], color, color, 1);
+  }
+}
+
+// Where the text sits next to the slice in the standard logo layout
+#define LOGO_TEXT_X 34
+#define LOGO_NUMBER_X 37
+#define LOGO_NUMBER_Y 9
+
+// ---------------------------------------------------------------------------
+// Program: logo zoom
+// ---------------------------------------------------------------------------
+
+/**
+ * The slice pops up in the middle with 8738 inside it, its segments fill in
+ * one at a time, then it slides into the logo position while SLICE and 8738
+ * type in beside it. Then it zooms away and starts over.
+ * Side letters fade in with the slice and turn cyan with the segments.
+ **/
+void logoZoom() {
+  unsigned long t = logoAnimTime("logoZoom", 6400);
+
+  float grow = easeOutBack(phase(t, 0, 900));
+  float slide = easeInOutCubic(phase(t, 2600, 3400));
+  float away = easeInCubic(phase(t, 5800, 6300));
+
+  float r = 15 * grow * (1 - away);
+  SlicePose p = slicePose(lerp(32, 15, slide), lerp(8 - 0.45 * r, 0, slide), r, 0);
+
+  // One more segment every 400ms from 1s in
+  int lit = t < 1000 ? 0 : (int)((t - 1000) / 400) + 1;
+  if (lit > 4) lit = 4;
+  int typed = t < 3200 ? 0 : (int)((t - 3200) / 100);
+
+  matrix.clear();
+  drawSlice(p, firstLetters(lit), DIM_CYAN, slide < 0.5);
+  if (t < 5800) {
+    drawSmallText(LOGO_TEXT_X, 0, "SLICE", WHITE, typed, -1000);
+    drawSmallText(LOGO_NUMBER_X, LOGO_NUMBER_Y, "8738", CYAN, typed - 5, -1000);
+  }
+  showMatrix();
+
+  uint8_t level = 255 * clamp01(phase(t, 0, 900)) * (1 - away);
+  sideLetters(typed >= 9 ? ALL_LETTERS : firstLetters(lit), ALL_LETTERS, level);
+}
+
+// ---------------------------------------------------------------------------
+// Program: logo spin
+// ---------------------------------------------------------------------------
+
+/**
+ * The slice spins like a wheel and slows down to land at a 45 degree tilt,
+ * like the real logo. SLICE / 8738 slide in next to it, then slide out as
+ * it starts spinning again. A single cyan letter chases round the side
+ * letters while it spins, and they all flash cyan when it lands.
+ **/
+void logoSpin() {
+  unsigned long t = logoAnimTime("logoSpin", 5200);
+
+  // Three full turns, slowing down, ending at 45 degrees.
+  // (-1035 is the same as 45 degrees, so the loop is seamless.)
+  float spin = easeOutCubic(phase(t, 0, 2600));
+  float angle = 45 - 1080 * (1 - spin);
+  SlicePose p = slicePose(12, 6.5, 9.5, angle);
+
+  float in = easeOutCubic(phase(t, 2600, 3100));
+  float out = easeInCubic(phase(t, 4700, 5200));
+  int textX = (int)(lerp(64, 30, in) + 40 * out);
+
+  // Light all segments for a moment when it lands
+  bool flash = t >= 2600 && t < 3000;
+
+  matrix.clear();
+  drawSlice(p, flash ? 0x0F : 0, DIM_CYAN, false);
+  drawSmallText(textX, 0, "SLICE", WHITE, 5, -1000);
+  drawSmallText(textX + 3, LOGO_NUMBER_Y, "8738", CYAN, 4, -1000);
+  showMatrix();
+
+  if (t < 2600) {
+    // Which letter is lit depends on how far round the slice has turned
+    int letter = ((int)((angle + 1080) / 72)) % 5;
+    sideLetters(1 << letter, ALL_LETTERS, 255);
+  } else {
+    sideLetters(flash ? ALL_LETTERS : 0, ALL_LETTERS, 255);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Program: logo roll
+// ---------------------------------------------------------------------------
+
+/**
+ * The slice rolls in from the right like a wheel, uncovering "SLICE 8738"
+ * behind it. After a pause it rolls back the other way, wiping the text off.
+ * Side letters turn cyan as the text is uncovered.
+ **/
+void logoRoll() {
+  unsigned long t = logoAnimTime("logoRoll", 6500);
+  const float r = 7.5;
+
+  // x = where the middle of the slice is
+  float x;
+  if (t < 3700) {
+    x = lerp(64 + 10, -10, phase(t, 0, 2500));
+  } else {
+    x = lerp(-10, 64 + 10, phase(t, 3700, 6200));
+  }
+  // Rolling: turn by the distance travelled divided by the radius
+  SlicePose p = slicePose(x, 7.5, r, degrees(x / r));
+
+  // The text is visible to the right of the slice
+  int fromX = (int)x;
+
+  matrix.clear();
+  drawSmallText(3, 4, "SLICE", WHITE, 5, fromX);
+  drawSmallText(3 + 6 * 6, 4, "8738", CYAN, 4, fromX);
+  drawSlice(p, 0, DIM_CYAN, false);
+  showMatrix();
+
+  // One letter per ~12 pixels of text uncovered
+  int uncovered = (int)((64 - x) / 12);
+  sideLetters(firstLetters(uncovered), ALL_LETTERS, 255);
+}
+
+// ---------------------------------------------------------------------------
+// Program: logo squeeze
+// ---------------------------------------------------------------------------
+
+#define JUICE_DROPS 18
+
+/**
+ * The slice gets squashed, wobbles back into shape and sprays cyan juice
+ * drops that arc up and fall. Then "SLICE!" / "SQUEEZE!" pops up.
+ * The side letters flash cyan on the squeeze and fade back to orange.
+ **/
+void logoSqueeze() {
+  unsigned long t = logoAnimTime("logoSqueeze", 3600);
+
+  // How squashed it is: squash for 250ms, then wobble back
+  float squash = 0;
+  if (t < 250) {
+    squash = easeOutCubic(t / 250.0);
+  } else if (t < 900) {
+    float k = (t - 250) / 650.0;
+    squash = cos(k * 3 * PI) * (1 - k);
+  }
+
+  float r = 12 * (1 - easeInCubic(phase(t, 1600, 1900)));
+  SlicePose p = slicePose(32, 0, r, 0);
+  p.sy = 1 - 0.35 * squash;
+  p.sx = 1 + 0.25 * squash;
+  p.cy = 15 - r * p.sy;  // keep the bottom of the rind on the "table"
+
+  matrix.clear();
+  drawSlice(p, 0, DIM_CYAN, false);
+
+  if (t >= 1900) {
+    drawSmallText(14, 0, "SLICE!", WHITE, 6, -1000);
+    drawSmallText(8, LOGO_NUMBER_Y, "SQUEEZE!", CYAN, 8, -1000);
+  }
+
+  // Juice drops, launched from along the flat edge when it's squeezed
+  if (t >= 250) {
+    float s = (t - 250) / 1000.0;  // seconds since the squeeze
+    for (int i = 0; i < JUICE_DROPS; i++) {
+      float x0 = 21 + i * 22.0 / (JUICE_DROPS - 1);
+      float vx = (x0 - 32) * 2.2 + ((i * 7) % 5 - 2) * 3;   // spread outwards
+      float vy = -22 - ((i * 13) % 7) * 3;                  // up, some higher
+      int16_t dx = (int16_t)(x0 + vx * s);
+      int16_t dy = (int16_t)(6 + vy * s + 30 * s * s);      // gravity
+      // A dim trail where the drop was a moment ago, then the drop itself
+      float s0 = s - 0.06;
+      matrix.drawPixel((int16_t)(x0 + vx * s0), (int16_t)(6 + vy * s0 + 30 * s0 * s0), DIM_CYAN);
+      matrix.drawPixel(dx, dy, CYAN);
+    }
+  }
+  showMatrix();
+
+  // Side: cyan on the squeeze, fading back to orange
+  float fade = phase(t, 400, 1200);
+  if (t < 200) {
+    sideColor(SIDE_ORANGE_R, SIDE_ORANGE_G, SIDE_ORANGE_B);
+  } else {
+    sideColor(lerp(SIDE_CYAN_R, SIDE_ORANGE_R, fade),
+              lerp(SIDE_CYAN_G, SIDE_ORANGE_G, fade),
+              lerp(SIDE_CYAN_B, SIDE_ORANGE_B, fade));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Program: logo sunrise
+// ---------------------------------------------------------------------------
+
+/**
+ * The slice rises from the bottom upside down like a sunrise, with 8738 in
+ * its segments. The segments light up one at a time, then the digits fly out
+ * into place as the slice flips over into the logo position and SLICE types
+ * in. Then it all sinks away.
+ * Side letters fill from the bottom as it rises, then turn cyan one at a time.
+ **/
+void logoSunrise() {
+  unsigned long t = logoAnimTime("logoSunrise", 6600);
+
+  float rise = easeOutCubic(phase(t, 0, 1200));
+  float fly = easeInOutCubic(phase(t, 2600, 3600));
+  float sink = easeInCubic(phase(t, 5800, 6600));
+  float drop = 18 * sink;  // everything moves down this far at the end
+
+  // The sunrise pose: upside down, mirrored so the digits still read 8 7 3 8
+  SlicePose sun = slicePose(32, lerp(31, 15, rise), 15, 180);
+  sun.sx = -1;
+  // Fly into the normal logo pose, flipping over like a coin on the way
+  // (squashing its height through zero turns the dome upside down)
+  SlicePose p = sun;
+  p.cx = lerp(32, 15, fly);
+  p.cy = lerp(sun.cy, 0, fly) + drop;
+  p.sy = cos(fly * PI);
+
+  int lit = t < 1200 ? 0 : (int)((t - 1200) / 300) + 1;
+  if (lit > 4) lit = 4;
+  int typed = t < 3400 ? 0 : (int)((t - 3400) / 100);
+
+  matrix.clear();
+  if (t < 2600) {
+    drawSlice(p, firstLetters(lit), DIM_CYAN, true);
+  } else {
+    drawSlice(p, 0, DIM_CYAN, false);
+    // Each digit flies from its segment to its place in 8738, growing from
+    // the tiny font to the normal one halfway there
+    for (int k = 0; k < 4; k++) {
+      int16_t sx, sy;
+      sliceDigitPos(sun, k, sx, sy);
+      int16_t x = (int16_t)lerp(sx, LOGO_NUMBER_X + k * 6, fly);
+      int16_t y = (int16_t)(lerp(sy, LOGO_NUMBER_Y, fly) + drop);
+      if (fly < 0.5) {
+        drawTinyDigit(x, y, "8738"[k], WHITE);
+      } else {
+        matrix.drawChar(x, y, "8738"[k], CYAN, CYAN, 1);
+      }
+    }
+    drawSmallText(LOGO_TEXT_X, (int)drop, "SLICE", WHITE, typed, -1000);
+  }
+  showMatrix();
+
+  if (t < 1200) {
+    sideRows((int)(43 * rise));
+  } else {
+    int cyan = t < 3600 ? lit : 5;
+    sideLetters(firstLetters(cyan), ALL_LETTERS, 255 * (1 - sink));
+  }
 }
 
 /**
