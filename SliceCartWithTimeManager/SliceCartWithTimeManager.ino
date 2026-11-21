@@ -1293,9 +1293,9 @@ int lastLogoStep = -1;
 
 /**
  * The team logo with the side letters turning cyan one at a time:
- *   step 0: plain logo, all letters orange
- *   steps 1-4: segment N + its digit of 8738 light up, letters S, L, I, C turn cyan
- *   step 5: the whole slice and 8738 light up and E turns cyan
+ *   step 0: plain logo, all side letters cyan
+ *   steps 1-4: segment N + its digit of 8738 light up, letters S, L, I, C turn orange
+ *   step 5: the whole slice and 8738 light up and E turns orange
  * then it starts over.
  **/
 void animatedLogo() {
@@ -1314,7 +1314,8 @@ void animatedLogo() {
   if (step >= 1 && step <= 4) litMask = 1 << (step - 1);
   if (step == 5) litMask = 0x0F;
   drawLogo(litMask);
-  sideLetters(firstLetters(step), ALL_LETTERS, 255);
+  // Letters start cyan and turn orange one per step: S, L, I, C, then E
+  sideLetters(ALL_LETTERS & ~firstLetters(step), ALL_LETTERS, 255);
 }
 
 // ---------------------------------------------------------------------------
@@ -1539,7 +1540,7 @@ void drawSmallText(int x, int y, const char *text, uint16_t color, int count, in
  * The slice pops up in the middle with 8738 inside it, its segments fill in
  * one at a time, then it slides into the logo position while SLICE and 8738
  * type in beside it. Then it zooms away and starts over.
- * Side letters fade in with the slice and turn cyan with the segments.
+ * Side letters fade in cyan with the slice and turn orange with the segments.
  **/
 void logoZoom() {
   unsigned long t = logoAnimTime("logoZoom", 6400);
@@ -1564,8 +1565,11 @@ void logoZoom() {
   }
   showMatrix();
 
+  // Side letters start cyan and turn orange on the same 400ms beat as the
+  // segments, E included (it doesn't wait for the text to finish typing)
+  int orange = t < 1000 ? 0 : (int)((t - 1000) / 400) + 1;
   uint8_t level = 255 * clamp01(phase(t, 0, 900)) * (1 - away);
-  sideLetters(typed >= 9 ? ALL_LETTERS : firstLetters(lit), ALL_LETTERS, level);
+  sideLetters(ALL_LETTERS & ~firstLetters(orange), ALL_LETTERS, level);
 }
 
 // ---------------------------------------------------------------------------

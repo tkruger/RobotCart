@@ -58,8 +58,8 @@ Programs 1–6 are built around the team logo, 7–11 are rainbow themes, and 12
 | # | Side letters | Matrix |
 |---|---|---|
 | 0 | Off | Off |
-| 1 | Turn cyan one letter at a time, S → E | Team logo, lighting each slice segment + digit of 8738 in turn |
-| 2 | Fade in, turn cyan with the segments | **Zoom:** slice pops up, fills in, slides into place as SLICE / 8738 type in |
+| 1 | Start cyan, turn orange one letter at a time, S → E | Team logo, lighting each slice segment + digit of 8738 in turn |
+| 2 | Fade in cyan, turn orange one letter at a time with the segments | **Zoom:** slice pops up, fills in, slides into place as SLICE / 8738 type in |
 | 3 | A cyan letter chases round, all flash on landing | **Spin:** slice spins like a wheel and lands at the logo's 45° tilt |
 | 4 | Turn cyan as the text is uncovered | **Roll:** slice rolls across uncovering "SLICE 8738", then rolls back |
 | 5 | Flash cyan on the squeeze, then pulse with the chant | **Squeeze:** slice squashes and sprays juice, then the chant builds up word by word: "SLICE! SLICE!" over "SQUEEZE!!" |
