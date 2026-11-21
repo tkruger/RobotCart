@@ -73,6 +73,8 @@
 // to send), so 1 pixel/frame scrolls at ~24 pixels (2 characters) a second.
 // 2 doubles the speed but looks jumpy.
 #define SCROLL_STEP 1
+// Pixels per frame for the long rainbow chants (programs 12 and 13)
+#define FAST_SCROLL_STEP 2
 
 // ---------------------------------------------------------------------------
 // ColorWheel
@@ -612,12 +614,12 @@ void loop() {
     // 12: Fading rainbow sides + scrolling chant that changes color as a whole
     case 12:
       rainbow(15);
-      rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 15, SCROLL_STEP, false);
+      rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 15, FAST_SCROLL_STEP, false);
       break;
     // 13: Fading rainbow sides + scrolling chant with each letter a different color
     case 13:
       rainbow(15);
-      rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 85, SCROLL_STEP, true);
+      rainbowScrollingText(F("SLICE! SLICE! SQUEEZE!!"), 0, 85, FAST_SCROLL_STEP, true);
       break;
     // 14: Sound-reactive VU meter on the sides + red "SLICE" / "8738" flashing
     case 14:
@@ -631,7 +633,7 @@ void loop() {
       break;
     // 16: Light up S, L, I, C, E one at a time, with matching matrix text
     case 16:
-      cycleAllLetters(255, 50, 0, 2, true);
+      cycleAllLetters(255, 50, 0, 4, true);  // ~0.57s per letter
       break;
     // 17: Letter-by-letter then blink the whole word + scrolling orange chant
     case 17:

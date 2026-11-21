@@ -202,7 +202,7 @@ When you add a program, add it to `PROGRAMS` at the top of `make_gifs.py`.
 
 - **Use `showStrip()` / `showMatrix()`, never `strip.show()` / `matrix.show()`.** While the Mega sends data to the LEDs, interrupts are switched off and `millis()` stops counting. Sending all 1,324 LEDs takes about 40 ms, but `millis()` only sees about 2 ms of it, so time-based effects used to run 10–20× slower than written. The wrappers add the missing time back, and the sketch reads time from `cartMillis()`.
 - **Keep times in `unsigned long`.** An `int` on the Mega is 16 bits and overflows after about 32 seconds.
-- **The display maxes out at about 24 frames a second.** Every LED takes 30 µs to send. Scrolling text moves 1 pixel per frame (`SCROLL_STEP`) because that's the smoothest it can go; 2 is twice as fast but jumpy.
+- **The display maxes out at about 24 frames a second.** Every LED takes 30 µs to send. Scrolling text moves 1 pixel per frame (`SCROLL_STEP`) because that's the smoothest it can go; 2 is twice as fast but a little less smooth; programs 12 and 13 use it (`FAST_SCROLL_STEP`) so the long chant doesn't drag.
 
 ## Known quirks
 
