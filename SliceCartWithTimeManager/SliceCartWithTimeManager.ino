@@ -878,7 +878,9 @@ void cycleAllLetters(int red, int green, int blue, int speed, boolean includeMat
 
   // S
   if (timeInSideSequence < 142 * speed) {
-    restartScroll();
+    // Only reset the matrix if this effect owns it; otherwise (program 17)
+    // it would cut off the chant scrolling alongside every time S lights up.
+    if (includeMatrix) restartScroll();
     setLetter(1, red, green, blue);
     if (includeMatrix) showText("SLICE", rainbowColors[1]);
     return;
