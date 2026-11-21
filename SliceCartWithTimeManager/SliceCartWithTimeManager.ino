@@ -1264,14 +1264,14 @@ void sideColor(uint8_t red, uint8_t green, uint8_t blue) {
 
 /**
  * Light the side letters from the bottom up like a rising sun: the bottom
- * `rows` rows (0-43) in orange, the rest off.
+ * `rows` rows (0-43) in cyan, the rest off.
  **/
 void sideRows(int rows) {
   uint32_t state = 0x02000000UL | rows;
   if (state == lastSideState) return;
   lastSideState = state;
   strip.clear();
-  for (int i = 0; i < rows; i++) setRow(i, SIDE_ORANGE_R, SIDE_ORANGE_G, SIDE_ORANGE_B);
+  for (int i = 0; i < rows; i++) setRow(i, SIDE_CYAN_R, SIDE_CYAN_G, SIDE_CYAN_B);
   updateLeds();
 }
 
@@ -1769,7 +1769,8 @@ void logoSqueeze() {
  * its segments. The segments light up one at a time, then the digits fly out
  * into place as the slice flips over into the logo position and SLICE types
  * in. Then it all sinks away.
- * Side letters fill from the bottom as it rises, then turn cyan one at a time.
+ * Side letters fill cyan from the bottom as it rises, then turn orange one at
+ * a time on the same 300ms beat as the segments, E included.
  **/
 void logoSunrise() {
   unsigned long t = logoAnimTime("logoSunrise", 6600);
@@ -1818,8 +1819,8 @@ void logoSunrise() {
   if (t < 1200) {
     sideRows((int)(43 * rise));
   } else {
-    int cyan = t < 3600 ? lit : 5;
-    sideLetters(firstLetters(cyan), ALL_LETTERS, 255 * (1 - sink));
+    int orange = (int)((t - 1200) / 300) + 1;
+    sideLetters(ALL_LETTERS & ~firstLetters(orange), ALL_LETTERS, 255 * (1 - sink));
   }
 }
 
